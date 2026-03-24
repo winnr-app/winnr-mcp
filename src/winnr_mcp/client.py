@@ -98,6 +98,13 @@ class WinnrClient:
         data = body.get("data") if body else None
         pagination = body.get("pagination") if body else None
 
+        # The API wraps paginated route responses as:
+        #   {"data": {"data": [...], "pagination": {...}}, "meta": {...}}
+        # Unwrap the inner data/pagination if present.
+        if isinstance(data, dict) and "data" in data and "pagination" in data:
+            pagination = data["pagination"]
+            data = data["data"]
+
         return WinnrResponse(
             ok=True,
             status_code=response.status_code,

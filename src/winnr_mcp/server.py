@@ -39,18 +39,12 @@ def create_server(config: WinnrConfig) -> FastMCP:
 
 
 def _discover_permissions(client: WinnrClient, config: WinnrConfig) -> None:
-    """Validate token and discover permissions via GET /v1/account.
+    """Validate token and populate account info via GET /v1/account.
 
     If the token is invalid, we still start (tools will return auth errors).
-    If the token is read-only, write tools won't be registered.
+    Permission gating is controlled by --read-only flag or WINNR_READ_ONLY env var.
     """
     response = client.get("/v1/account")
     if response.ok and response.data:
         config.account_id = response.data.get("id")
         config.plan = response.data.get("plan")
-        # Token permissions come from the token metadata, not the account.
-        # The API returns 403 on write operations if the token lacks write permission.
-        # We check by looking at the token's permission field in the response if available.
-        token_permissions = response.data.get("token_permissions")
-        if token_permissions:
-            config.permissions = token_permissions

@@ -34,6 +34,7 @@ def load_config() -> WinnrConfig:
     parser.add_argument("--token", help="Winnr API token (wnr_*)")
     parser.add_argument("--api-url", help=f"API base URL (default: {DEFAULT_API_URL})")
     parser.add_argument("--timeout", type=int, help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT})")
+    parser.add_argument("--read-only", action="store_true", help="Only register read tools (hides all write tools)")
     args = parser.parse_args()
 
     api_token = args.token or os.environ.get("WINNR_API_TOKEN")
@@ -48,9 +49,13 @@ def load_config() -> WinnrConfig:
 
     api_url = args.api_url or os.environ.get("WINNR_API_URL", DEFAULT_API_URL)
     timeout = args.timeout or int(os.environ.get("WINNR_TIMEOUT", str(DEFAULT_TIMEOUT)))
+    read_only = args.read_only or os.environ.get("WINNR_READ_ONLY", "").lower() in ("true", "1", "yes")
+
+    permissions = ["read"] if read_only else ["read", "write"]
 
     return WinnrConfig(
         api_token=api_token,
         api_url=api_url.rstrip("/"),
         timeout=timeout,
+        permissions=permissions,
     )
