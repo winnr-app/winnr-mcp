@@ -80,6 +80,18 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 }
 ```
 
+#### Claude Code
+
+```bash
+claude mcp add winnr -- env WINNR_API_TOKEN=wnr_your_token_here uvx winnr-mcp
+```
+
+**Want guided workflows?** Install [Winnr Claude Code Skills](https://github.com/winnr-app/winnr-claude-skills) for slash commands like `/winnr setup`, `/winnr health`, and `/winnr export`:
+
+```bash
+curl -sL https://raw.githubusercontent.com/winnr-app/winnr-claude-skills/main/install.sh | bash
+```
+
 ### 3. Alternative: pip install
 
 ```bash
