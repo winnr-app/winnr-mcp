@@ -14,7 +14,9 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
     @mcp.tool()
     def winnr_export_email_users(
         format: str = "default",
-        domain: str | None = None,
+        domains: list[str] | None = None,
+        emails: list[str] | None = None,
+        getAllDomains: bool = False,
     ) -> str:
         """Export email users to CSV and get a download URL.
 
@@ -25,13 +27,21 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         quickmail, lemlist, woodpecker, reply, mailshake, gmass, yesware,
         mixmax, outreach, salesloft.
 
+        Must specify at least one of: domains, emails, or getAllDomains.
+
         Args:
             format: Export format (default "default")
-            domain: Optional domain filter — only export users on this domain
+            domains: List of domain names to export users from
+            emails: List of specific email addresses to export
+            getAllDomains: If true, export all email users for the account
         """
         body: dict = {"format": format}
-        if domain:
-            body["domain"] = domain
+        if domains:
+            body["domains"] = domains
+        if emails:
+            body["emails"] = emails
+        if getAllDomains:
+            body["getAllDomains"] = True
         response = client.post("/v1/export", json_body=body)
         if not response.ok:
             return response.error_message or "Unknown error"
