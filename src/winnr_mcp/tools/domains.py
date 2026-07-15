@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
@@ -217,6 +219,67 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             if not response.ok:
                 return response.error_message or "Unknown error"
             return response.to_json()
+
+        @mcp.tool()
+        def winnr_tag_domains(domain_ids: list[str], tags: list[str], mode: str = "add") -> str:
+            """Add, remove, or replace tags on one or more domains.
+
+            Tags are free-form labels for organizing domains — they show in
+            winnr_list_domains output and are filterable in the dashboard.
+
+            Modes:
+                add    — append the given tags to each domain's existing tags (default)
+                remove — remove the given tags from each domain
+                set    — replace each domain's tags with exactly the given list
+
+            Args:
+                domain_ids: Domain IDs to update (from winnr_list_domains), max 50
+                tags: Tag strings to add/remove/set
+                mode: "add" (default), "remove", or "set"
+            """
+            mode = (mode or "add").strip().lower()
+            if mode not in ("add", "remove", "set"):
+                return json.dumps({"error": 'mode must be "add", "remove", or "set"'})
+            if not domain_ids:
+                return json.dumps({"error": "domain_ids is required"})
+            if len(domain_ids) > 50:
+                return json.dumps({"error": "Maximum 50 domains per call"})
+            cleaned = [t.strip() for t in tags if t and t.strip()]
+            if not cleaned and mode != "set":
+                return json.dumps({"error": "tags is required for add/remove"})
+
+            results = []
+            for domain_id in domain_ids:
+                if mode == "set":
+                    new_tags = cleaned
+                else:
+                    # read-modify-write: PATCH replaces the whole list
+                    current_resp = client.get(f"/v1/domains/{domain_id}")
+                    if not current_resp.ok:
+                        results.append({
+                            "domain_id": domain_id, "ok": False,
+                            "error": current_resp.error_message or "Unknown error",
+                        })
+                        continue
+                    current = (current_resp.data or {}).get("tags") or []
+                    if mode == "add":
+                        new_tags = current + [t for t in cleaned if t not in current]
+                    else:  # remove
+                        new_tags = [t for t in current if t not in cleaned]
+                patch_resp = client.patch(f"/v1/domains/{domain_id}", json_body={"tags": new_tags})
+                if not patch_resp.ok:
+                    results.append({
+                        "domain_id": domain_id, "ok": False,
+                        "error": patch_resp.error_message or "Unknown error",
+                    })
+                else:
+                    results.append({"domain_id": domain_id, "ok": True, "tags": new_tags})
+
+            updated = sum(1 for r in results if r["ok"])
+            return json.dumps({
+                "mode": mode, "updated": updated,
+                "failed": len(results) - updated, "results": results,
+            })
 
         @mcp.tool()
         def winnr_verify_dns(domain_id: str) -> str:

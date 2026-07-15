@@ -109,7 +109,7 @@ def test_warming_write_tools_hidden_read_only(read_only_config):
 # ── Tool count tests ────────────────────────────────────────────────────
 
 def test_all_tools_registered(config):
-    """All 36 tools are registered with full permissions."""
+    """All 38 tools are registered with full permissions."""
     mcp, client = make_mcp_and_client(config)
     register_account_tools(mcp, client, config)
     register_domain_tools(mcp, client, config)
@@ -120,7 +120,7 @@ def test_all_tools_registered(config):
     register_export_tools(mcp, client, config)
     tools = mcp._tool_manager.list_tools()
     tool_names = [t.name for t in tools]
-    assert len(tool_names) == 37, f"Expected 37 tools, got {len(tool_names)}: {sorted(tool_names)}"
+    assert len(tool_names) == 38, f"Expected 38 tools, got {len(tool_names)}: {sorted(tool_names)}"
 
 
 def test_read_only_tool_count(read_only_config):
@@ -287,3 +287,95 @@ def test_winnr_export_email_users(config):
     result = mcp._tool_manager._tools["winnr_export_email_users"].fn(format="smartlead")
     data = json.loads(result)
     assert "download_url" in data["data"]
+
+
+# ── winnr_tag_domains ───────────────────────────────────────────────────
+
+def test_tag_domains_registered_and_gated(config, read_only_config):
+    mcp, client = make_mcp_and_client(config)
+    register_domain_tools(mcp, client, config)
+    assert "winnr_tag_domains" in [t.name for t in mcp._tool_manager.list_tools()]
+
+    mcp_ro, client_ro = make_mcp_and_client(read_only_config)
+    register_domain_tools(mcp_ro, client_ro, read_only_config)
+    assert "winnr_tag_domains" not in [t.name for t in mcp_ro._tool_manager.list_tools()]
+
+
+@respx.mock
+def test_tag_domains_add_merges_existing(config):
+    """add mode reads current tags and appends without duplicates."""
+    respx.get("https://api.test.winnr.app/v1/domains/dom_1").mock(
+        return_value=api_success(data={"id": "dom_1", "tags": ["clientA", "q3"]})
+    )
+    respx.patch("https://api.test.winnr.app/v1/domains/dom_1").mock(
+        return_value=api_success(data={"id": "dom_1", "tags": ["clientA", "q3", "warm"]})
+    )
+    mcp, client = make_mcp_and_client(config)
+    register_domain_tools(mcp, client, config)
+    result = json.loads(mcp._tool_manager._tools["winnr_tag_domains"].fn(
+        domain_ids=["dom_1"], tags=["warm", "q3"], mode="add"
+    ))
+    assert result["updated"] == 1 and result["failed"] == 0
+    assert result["results"][0]["tags"] == ["clientA", "q3", "warm"]
+    # PATCH body carried the merged list
+    patch_call = [c for c in respx.calls if c.request.method == "PATCH"][0]
+    assert json.loads(patch_call.request.content) == {"tags": ["clientA", "q3", "warm"]}
+
+
+@respx.mock
+def test_tag_domains_remove(config):
+    respx.get("https://api.test.winnr.app/v1/domains/dom_1").mock(
+        return_value=api_success(data={"id": "dom_1", "tags": ["clientA", "q3"]})
+    )
+    respx.patch("https://api.test.winnr.app/v1/domains/dom_1").mock(
+        return_value=api_success(data={"id": "dom_1", "tags": ["clientA"]})
+    )
+    mcp, client = make_mcp_and_client(config)
+    register_domain_tools(mcp, client, config)
+    result = json.loads(mcp._tool_manager._tools["winnr_tag_domains"].fn(
+        domain_ids=["dom_1"], tags=["q3"], mode="remove"
+    ))
+    assert result["results"][0]["tags"] == ["clientA"]
+
+
+@respx.mock
+def test_tag_domains_set_skips_read(config):
+    """set mode PATCHes directly without a GET."""
+    respx.patch("https://api.test.winnr.app/v1/domains/dom_1").mock(
+        return_value=api_success(data={"id": "dom_1", "tags": ["fresh"]})
+    )
+    mcp, client = make_mcp_and_client(config)
+    register_domain_tools(mcp, client, config)
+    result = json.loads(mcp._tool_manager._tools["winnr_tag_domains"].fn(
+        domain_ids=["dom_1"], tags=["fresh"], mode="set"
+    ))
+    assert result["updated"] == 1
+    assert all(c.request.method == "PATCH" for c in respx.calls)
+
+
+@respx.mock
+def test_tag_domains_partial_failure(config):
+    respx.get("https://api.test.winnr.app/v1/domains/dom_ok").mock(
+        return_value=api_success(data={"id": "dom_ok", "tags": []})
+    )
+    respx.patch("https://api.test.winnr.app/v1/domains/dom_ok").mock(
+        return_value=api_success(data={"id": "dom_ok", "tags": ["x"]})
+    )
+    respx.get("https://api.test.winnr.app/v1/domains/dom_missing").mock(
+        return_value=api_error(404, "not_found", "Domain not found")
+    )
+    mcp, client = make_mcp_and_client(config)
+    register_domain_tools(mcp, client, config)
+    result = json.loads(mcp._tool_manager._tools["winnr_tag_domains"].fn(
+        domain_ids=["dom_ok", "dom_missing"], tags=["x"], mode="add"
+    ))
+    assert result["updated"] == 1 and result["failed"] == 1
+
+
+def test_tag_domains_validates_mode(config):
+    mcp, client = make_mcp_and_client(config)
+    register_domain_tools(mcp, client, config)
+    result = json.loads(mcp._tool_manager._tools["winnr_tag_domains"].fn(
+        domain_ids=["dom_1"], tags=["x"], mode="bogus"
+    ))
+    assert "error" in result

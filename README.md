@@ -140,6 +140,7 @@ CLI args take precedence over environment variables.
 | `winnr_setup_domain` | Queue domain setup (no purchase) | write |
 | `winnr_connect_domains` | Connect external domains | write |
 | `winnr_delete_domain` | Delete a domain | write |
+| `winnr_tag_domains` | Add/remove/replace tags on domains | write |
 | `winnr_get_dns_status` | Check DNS propagation | read |
 | `winnr_get_dns_records` | Get expected DNS records | read |
 | `winnr_verify_dns` | Verify DNS via live lookup | write |
