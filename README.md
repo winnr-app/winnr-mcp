@@ -10,11 +10,12 @@ MCP server for the [Winnr](https://winnr.app) email infrastructure API.
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that lets AI assistants like Claude, Cursor, and Windsurf manage your Winnr email infrastructure through natural language.
 
-**36 tools** covering:
+**45 tools** covering:
 - Domain management (search, purchase, connect, DNS verification)
 - Email user/mailbox provisioning (create, update, delete, bulk)
 - Inbox operations (list, read, send, refresh)
 - Email warming (enable, pause, resume, metrics)
+- Pre-warmed marketplace (browse and buy aged, already-warmed domains)
 - Job tracking (async operation monitoring)
 - Data export (CSV for Smartlead, Instantly, Snov, etc.)
 
@@ -179,6 +180,26 @@ CLI args take precedence over environment variables.
 | `winnr_pause_warming` | Pause warming | write |
 | `winnr_resume_warming` | Resume warming | write |
 | `winnr_update_warming_settings` | Update volume/ramp-up/reply rate | write |
+
+### Pre-warmed Marketplace
+
+Aged domains whose mailboxes have already been warming, so they can send
+immediately. Billed at $3/address/month with a 90-day minimum term; the domain
+is included. Requires the marketplace to be enabled on your account.
+
+| Tool | Description | Permission |
+|------|-------------|------------|
+| `winnr_browse_prewarmed` | Browse available pre-warmed domains | read |
+| `winnr_get_prewarmed_domain` | Detail + per-address health scores | read |
+| `winnr_check_prewarmed_blocklist` | Live blocklist re-check (9 lists) | read |
+| `winnr_list_my_prewarmed` | List purchased pre-warmed domains | read |
+| `winnr_purchase_prewarmed` | Buy one domain ($3/addr/mo) | write |
+| `winnr_purchase_prewarmed_batch` | Buy up to 25 domains as one charge | write |
+| `winnr_cancel_prewarmed` | Cancel after the 90-day term | write |
+
+Inventory is finite and shared across customers. A listing can be claimed by
+another buyer at any moment, so treat a conflict error on purchase as "already
+sold" and move to the next candidate rather than retrying the same domain.
 
 ### Jobs
 
