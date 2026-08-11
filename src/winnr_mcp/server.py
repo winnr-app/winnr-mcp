@@ -14,6 +14,7 @@ from winnr_mcp.tools.inbox import register_inbox_tools
 from winnr_mcp.tools.jobs import register_job_tools
 from winnr_mcp.tools.prewarmed import register_prewarmed_tools
 from winnr_mcp.tools.warming import register_warming_tools
+from winnr_mcp.tools.webhooks import register_webhook_tools
 
 
 def create_server(config: WinnrConfig) -> FastMCP:
@@ -36,6 +37,7 @@ def create_server(config: WinnrConfig) -> FastMCP:
     register_prewarmed_tools(mcp, client, config)
     register_job_tools(mcp, client, config)
     register_export_tools(mcp, client, config)
+    register_webhook_tools(mcp, client, config)
 
     return mcp
 

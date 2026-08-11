@@ -20,6 +20,7 @@ from winnr_mcp.tools.warming import register_warming_tools
 from winnr_mcp.tools.jobs import register_job_tools
 from winnr_mcp.tools.prewarmed import register_prewarmed_tools
 from winnr_mcp.tools.export import register_export_tools
+from winnr_mcp.tools.webhooks import register_webhook_tools
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ def test_warming_write_tools_hidden_read_only(read_only_config):
 # ── Tool count tests ────────────────────────────────────────────────────
 
 def test_all_tools_registered(config):
-    """All 45 tools are registered with full permissions."""
+    """All 53 tools are registered with full permissions."""
     mcp, client = make_mcp_and_client(config)
     register_account_tools(mcp, client, config)
     register_domain_tools(mcp, client, config)
@@ -120,9 +121,10 @@ def test_all_tools_registered(config):
     register_prewarmed_tools(mcp, client, config)
     register_job_tools(mcp, client, config)
     register_export_tools(mcp, client, config)
+    register_webhook_tools(mcp, client, config)
     tools = mcp._tool_manager.list_tools()
     tool_names = [t.name for t in tools]
-    assert len(tool_names) == 45, f"Expected 45 tools, got {len(tool_names)}: {sorted(tool_names)}"
+    assert len(tool_names) == 53, f"Expected 53 tools, got {len(tool_names)}: {sorted(tool_names)}"
 
 
 def test_read_only_tool_count(read_only_config):
@@ -136,11 +138,12 @@ def test_read_only_tool_count(read_only_config):
     register_prewarmed_tools(mcp, client, read_only_config)
     register_job_tools(mcp, client, read_only_config)
     register_export_tools(mcp, client, read_only_config)
+    register_webhook_tools(mcp, client, read_only_config)
     tools = mcp._tool_manager.list_tools()
     tool_names = [t.name for t in tools]
     # Read-only: account(2) + domains(7 read) + email_users(2 read) + inbox(2 read)
-    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(1) = 23
-    assert len(tool_names) == 23, f"Expected 23 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
+    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(1) + webhooks(2 read) = 25
+    assert len(tool_names) == 25, f"Expected 25 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
 
 
 # ── Tool naming convention tests ────────────────────────────────────────
@@ -156,6 +159,7 @@ def test_all_tools_have_winnr_prefix(config):
     register_prewarmed_tools(mcp, client, config)
     register_job_tools(mcp, client, config)
     register_export_tools(mcp, client, config)
+    register_webhook_tools(mcp, client, config)
     tools = mcp._tool_manager.list_tools()
     for tool in tools:
         assert tool.name.startswith("winnr_"), f"Tool {tool.name} missing winnr_ prefix"
@@ -172,6 +176,7 @@ def test_all_tools_have_descriptions(config):
     register_prewarmed_tools(mcp, client, config)
     register_job_tools(mcp, client, config)
     register_export_tools(mcp, client, config)
+    register_webhook_tools(mcp, client, config)
     tools = mcp._tool_manager.list_tools()
     for tool in tools:
         assert tool.description, f"Tool {tool.name} has no description"

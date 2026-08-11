@@ -20,7 +20,7 @@ pytest
 - HTTP client: `src/winnr_mcp/client.py` (httpx wrapper for api.winnr.app)
 - Config: `src/winnr_mcp/config.py` (env var / CLI arg loading)
 - Error mapping: `src/winnr_mcp/errors.py`
-- Tools: `src/winnr_mcp/tools/` (account, domains, email_users, inbox, warming, prewarmed, jobs, export)
+- Tools: `src/winnr_mcp/tools/` (account, domains, email_users, inbox, warming, prewarmed, jobs, export, webhooks)
 - Tests: `tests/`
 
 ## Architecture

@@ -10,7 +10,7 @@ MCP server for the [Winnr](https://winnr.app) email infrastructure API.
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that lets AI assistants like Claude, Cursor, and Windsurf manage your Winnr email infrastructure through natural language.
 
-**45 tools** covering:
+**53 tools** covering:
 - Domain management (search, purchase, connect, DNS verification)
 - Email user/mailbox provisioning (create, update, delete, bulk)
 - Inbox operations (list, read, send, refresh)
@@ -18,6 +18,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that l
 - Pre-warmed marketplace (browse and buy aged, already-warmed domains)
 - Job tracking (async operation monitoring)
 - Data export (CSV for Smartlead, Instantly, Snov, etc.)
+- Webhooks (create, test, rotate secrets, inspect deliveries)
 
 ## Quick Start
 
@@ -213,6 +214,19 @@ sold" and move to the next candidate rather than retrying the same domain.
 | Tool | Description | Permission |
 |------|-------------|------------|
 | `winnr_export_email_users` | Export to CSV (15+ formats) | read |
+
+### Webhooks
+
+| Tool | Description | Permission |
+|------|-------------|------------|
+| `winnr_list_webhooks` | List webhook endpoints | read |
+| `winnr_get_webhook_deliveries` | Recent delivery attempts for a webhook | read |
+| `winnr_create_webhook` | Create a webhook (response includes signing secret) | write |
+| `winnr_update_webhook` | Update URL/events/description/status | write |
+| `winnr_delete_webhook` | Delete a webhook | write |
+| `winnr_test_webhook` | Send a `test.ping` event | write |
+| `winnr_get_webhook_secret` | Retrieve the signing secret (**sensitive**) | write |
+| `winnr_rotate_webhook_secret` | Rotate secret (old valid 24h) | write |
 
 ## Security
 
