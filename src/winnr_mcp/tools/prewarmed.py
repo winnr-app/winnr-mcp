@@ -116,8 +116,9 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
     def winnr_list_my_prewarmed() -> str:
         """List the pre-warmed domains this account has purchased.
 
-        Returns each domain with its purchase date and the date its 90-day
-        minimum term ends (before that date it cannot be cancelled).
+        Returns each domain with its purchase date. (The 90-day minimum term
+        was removed in August 2026; pre-warmed domains can be cancelled at any
+        time, and minimum_term_end is null on newer purchases.)
 
         Mailbox credentials are not returned here — use winnr_list_email_users
         filtered to the domain to get addresses and passwords.
@@ -140,7 +141,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             """Buy pre-warmed addresses on ONE domain. CHARGES THE ACCOUNT'S
             STRIPE CARD ON FILE.
 
-            Billed at $3 per address per month with a 90-day minimum term; the
+            Billed at $3 per address per month with no minimum term; the
             domain itself is included. The first month is charged immediately.
             Fail-closed — if the charge fails nothing is provisioned and the
             account is not billed. Idempotent per domain: re-running a
@@ -194,7 +195,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             order is rolled back and the account is not billed.
 
             Same terms as winnr_purchase_prewarmed: $3 per address per month,
-            90-day minimum term, domain included, first month charged now.
+            no minimum term, domain included, first month charged now.
 
             Args:
                 items: 1-25 order items, each a dict with:
@@ -225,8 +226,8 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             the account, along with any mail stored in them, and returns the
             domain to the marketplace. It cannot be undone.
 
-            Only allowed after the domain's 90-day minimum term has ended; a
-            call before that fails and tells you the earliest date.
+            Allowed at any time — there is no minimum term (the 90-day term
+            was removed in August 2026).
 
             Args:
                 domain: The purchased pre-warmed domain to cancel
