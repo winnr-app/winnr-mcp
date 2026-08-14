@@ -159,9 +159,13 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
               individually warmed but inherit the domain's reputation.
 
             Warming is stopped at sale either way; addresses arrive ready to
-            send. Pre-warmed addresses are a separate pool from the regular
-            mailbox allowance and do not count against the email user limit,
-            but the domain does count against the domain limit.
+            send. Pre-warmed addresses are a fully separate pool: they do not
+            count against the email user limit OR the domain limit, and NO
+            base plan subscription is required — billing runs on its own
+            standalone $3/addr subscription that survives plan cancellation.
+            Only a saved payment method is needed (a 402
+            payment_method_required error means add a card in the dashboard
+            first).
 
             To buy several domains, use winnr_purchase_prewarmed_batch instead
             so the whole order is one charge.
