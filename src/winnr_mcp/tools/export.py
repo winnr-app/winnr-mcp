@@ -5,8 +5,9 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
+from winnr_mcp import scopes as sc
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import READ, WRITE_IDEMPOTENT, clean_domain, is_str, tool_error
+from winnr_mcp.tools._common import READ, WRITE_IDEMPOTENT, clean_domain, is_str, tool_error, winnr_tool
 
 # Mirrors SUPPORTED_FORMATS in the API. Kept here so a typo fails locally with
 # the full list instead of a round trip.
@@ -21,7 +22,7 @@ EXPORT_FORMATS = (
 def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register data export MCP tools."""
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_list_export_formats() -> str:
         """List the CSV export formats the API supports (one per sequencer/outreach tool).
 
@@ -30,12 +31,9 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.get("/v1/export/formats").render()
 
-    if not config.can_write:
-        return
-
     # Registered for read/write tokens only: the API requires write scope for
     # POST /v1/export because the CSV contains mailbox passwords.
-    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
     def winnr_export_email_users(
         format: str = "default",
         domains: list[str] | None = None,

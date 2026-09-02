@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,14 +70,17 @@ class WinnrResponse:
 
 
 class WinnrClient:
-    """HTTP client for api.winnr.app."""
+    """HTTP client for api.winnr.app, bound to ONE API token / account."""
 
-    def __init__(self, config: WinnrConfig) -> None:
+    def __init__(self, config: WinnrConfig, api_token: str | None = None, account_id: str | None = None) -> None:
         self._config = config
+        # The account this client acts for. stdio fills it in after
+        # /v1/account; the remote server knows it from the OAuth grant.
+        self.account_id: str | None = account_id
         self._client = httpx.Client(
             base_url=config.api_url,
             headers={
-                "Authorization": f"Bearer {config.api_token}",
+                "Authorization": f"Bearer {api_token or config.api_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "User-Agent": f"winnr-mcp/{__version__}",
@@ -224,3 +228,32 @@ class WinnrClient:
     def delete(self, path: str, params: dict[str, Any] | None = None) -> WinnrResponse:
         """DELETE request."""
         return self._request("DELETE", path, params=params)
+
+
+class ClientProxy:
+    """Looks like a WinnrClient; forwards every call to the client for the current session.
+
+    Tools are registered once per process but, on the remote server, serve many
+    accounts. They hold a ClientProxy and never a concrete client. `resolver`
+    returns the WinnrClient for the current request (stdio: always the same
+    one; remote: built from the access token).
+    """
+
+    def __init__(self, resolver: Callable[[], WinnrClient]) -> None:
+        self._resolver = resolver
+
+    @property
+    def account_id(self) -> str | None:
+        return self._resolver().account_id
+
+    def get(self, *args: Any, **kwargs: Any) -> WinnrResponse:
+        return self._resolver().get(*args, **kwargs)
+
+    def post(self, *args: Any, **kwargs: Any) -> WinnrResponse:
+        return self._resolver().post(*args, **kwargs)
+
+    def patch(self, *args: Any, **kwargs: Any) -> WinnrResponse:
+        return self._resolver().patch(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> WinnrResponse:
+        return self._resolver().delete(*args, **kwargs)

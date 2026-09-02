@@ -43,22 +43,6 @@ def api_error(status_code=400, code="validation_error", message="Bad request") -
 
 # ── Permission gating ───────────────────────────────────────────────────
 
-def test_webhook_write_tools_hidden_read_only(read_only_config):
-    """Webhook write tools (including secret access) hidden for read-only tokens."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_webhook_tools(mcp, client, read_only_config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    # Read tools should be present
-    assert "winnr_list_webhooks" in tool_names
-    assert "winnr_get_webhook_deliveries" in tool_names
-    # Write tools should be absent
-    assert "winnr_create_webhook" not in tool_names
-    assert "winnr_update_webhook" not in tool_names
-    assert "winnr_delete_webhook" not in tool_names
-    assert "winnr_test_webhook" not in tool_names
-    assert "winnr_get_webhook_secret" not in tool_names
-    assert "winnr_rotate_webhook_secret" not in tool_names
-
 
 def test_webhook_write_tools_registered_with_write_permission(config):
     """All 8 webhook tools registered when token has write permission."""

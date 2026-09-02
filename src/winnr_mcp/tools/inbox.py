@@ -7,8 +7,9 @@ import json
 from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import MAX_BODY_LENGTH, WinnrClient
+from winnr_mcp import scopes as sc
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, clamp, tool_error, seg
+from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, clamp, tool_error, seg, winnr_tool
 
 
 def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -16,7 +17,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_list_inbox(
         limit: int = 50,
         cursor: str | None = None,
@@ -57,7 +58,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
             params["has_attachments"] = "true"
         return client.get("/v1/inbox", params=params).render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_get_message_body(uid: str, mailbox: str) -> str:
         """Get the full body of one message.
 
@@ -90,10 +91,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    if not config.can_write:
-        return
-
-    @mcp.tool(annotations=WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE)
     def winnr_send_email(
         user_id: str,
         to: str,
@@ -140,7 +138,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
             payload["references"] = references
         return client.post(f"/v1/email-users/{seg(user_id)}/inbox/send", json_body=payload).render()
 
-    @mcp.tool(annotations=WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE)
     def winnr_refresh_inbox() -> str:
         """Trigger a sync of new mail into the inbox cache for every mailbox.
 
@@ -149,7 +147,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
         """
         return client.post("/v1/inbox/refresh").render()
 
-    @mcp.tool(annotations=DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
     def winnr_delete_message(uid: str, mailbox: str) -> str:
         """Permanently delete one received message from a mailbox.
 

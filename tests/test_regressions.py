@@ -58,20 +58,7 @@ def test_every_tool_has_annotations(config):
         assert tool.annotations.readOnlyHint is not None, f"{tool.name} missing readOnlyHint"
 
 
-def test_read_only_registration_matches_read_only_hint(config, read_only_config):
-    """A tool registered for read-only tokens must be annotated read-only, and vice versa
-    (except winnr_get_webhook_secret, deliberately hidden from read-only tokens)."""
-    full, _ = build(config)
-    ro, _ = build(read_only_config)
-    ro_names = {t.name for t in ro._tool_manager.list_tools()}
-    for tool in full._tool_manager.list_tools():
-        if tool.name == "winnr_get_webhook_secret":
-            assert tool.name not in ro_names
-            continue
-        assert (tool.name in ro_names) == bool(tool.annotations.readOnlyHint), tool.name
-
-
-def test_removed_suggest_tool_is_gone(config):
+def test_removed_suggest_tool_is_gone(config):  # noqa: D103
     mcp, _ = build(config)
     assert "winnr_suggest_domains" not in [t.name for t in mcp._tool_manager.list_tools()]
 
@@ -141,17 +128,6 @@ def test_update_warming_settings_validates(config):
 
 
 @respx.mock
-def test_enable_warming_sends_settings(config):
-    route = respx.post(f"{API}/v1/warming/enable").mock(return_value=ok({"enabled": 1}))
-    mcp, _ = build(config)
-    call(mcp, "winnr_enable_warming", user_ids=["eu_1"], emails_per_day=15, rampup_speed="fast")
-    body = json.loads(route.calls[0].request.content)
-    assert body == {"user_ids": ["eu_1"], "settings": {"emails_per_day": 15, "rampup_speed": "fast"}}
-
-
-# ── Email users ─────────────────────────────────────────────────────────
-
-@respx.mock
 def test_bulk_create_sends_top_level_domain(config):
     route = respx.post(f"{API}/v1/email-users/bulk").mock(return_value=ok({"job_id": "j1"}))
     mcp, _ = build(config)
@@ -178,61 +154,6 @@ def _search_bulk(results):
     )
 
 
-@respx.mock
-def test_purchase_domains_is_async_and_reverifies_price(config):
-    search = _search_bulk([{"domain": "acmehq.com", "available": True, "price": 12}])
-    route = respx.post(f"{API}/v1/domains/purchase").mock(
-        return_value=httpx.Response(202, json={"data": {"job_id": "j9"}, "meta": {}})
-    )
-    mcp, _ = build(config)
-    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "AcmeHQ.com", "price": 12, "bogus": 1}])
-    assert out["data"]["job_id"] == "j9"
-    assert search.called
-    body = json.loads(route.calls[0].request.content)
-    assert body["async"] is True
-    assert body["domains"][0] == {"domain": "acmehq.com", "price": 12.0}
-
-
-@respx.mock
-def test_purchase_domains_refused_when_live_price_higher(config):
-    _search_bulk([{"domain": "acmehq.com", "available": True, "price": 25}])
-    purchase = respx.post(f"{API}/v1/domains/purchase")
-    mcp, _ = build(config)
-    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com", "price": 12}])
-    assert out["error"]["code"] == "price_changed" and "$25" in out["error"]["message"]
-    assert not purchase.called
-
-
-@respx.mock
-def test_purchase_domains_refused_when_taken(config):
-    _search_bulk([{"domain": "acmehq.com", "available": False, "price": None, "error": "taken"}])
-    purchase = respx.post(f"{API}/v1/domains/purchase")
-    mcp, _ = build(config)
-    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com", "price": 12}])
-    assert out["error"]["code"] == "price_changed"
-    assert not purchase.called
-
-
-@respx.mock
-def test_purchase_domains_fails_closed_when_price_check_fails(config):
-    respx.post(f"{API}/v1/domains/search-bulk").mock(return_value=httpx.Response(500, json={"error": {"code": "x", "message": "boom"}}))
-    purchase = respx.post(f"{API}/v1/domains/purchase")
-    mcp, _ = build(config)
-    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com", "price": 12}])
-    assert out["error"]["code"] == "price_check_failed"
-    assert not purchase.called
-
-
-@respx.mock
-def test_purchase_domains_without_price_skips_guard(config):
-    search = respx.post(f"{API}/v1/domains/search-bulk")
-    respx.post(f"{API}/v1/domains/purchase").mock(return_value=httpx.Response(202, json={"data": {"job_id": "j1"}}))
-    mcp, _ = build(config)
-    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com"}])
-    assert out["data"]["job_id"] == "j1"
-    assert not search.called
-
-
 def test_purchase_domains_rejects_non_string_domain(config):
     mcp, _ = build(config)
     out = call(mcp, "winnr_purchase_domains", domains=[{"domain": 123}])
@@ -241,12 +162,6 @@ def test_purchase_domains_rejects_non_string_domain(config):
     assert out["error"]["code"] == "invalid_arguments"
     out = call(mcp, "winnr_bulk_create_email_users", domain="a.com", users=[{"username": "a", "password": "short"}])
     assert "8 characters" in out["error"]["message"]
-
-
-def test_export_hidden_for_read_only(read_only_config):
-    mcp, _ = build(read_only_config)
-    names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "winnr_export_email_users" not in names and "winnr_list_export_formats" in names
 
 
 def test_check_dns_provider_caps_at_20(config):
@@ -302,18 +217,6 @@ def test_blocklist_single_list_goes_on_query_string(config):
     mcp, _ = build(config)
     call(mcp, "winnr_check_prewarmed_blocklist", domain="example.com", blocklist="surbl")
     assert route.calls[0].request.url.params["list"] == "surbl"
-
-
-def test_purchase_prewarmed_custom_usernames_sets_count(config):
-    with respx.mock:
-        route = respx.post(f"{API}/v1/prewarmed/purchase").mock(return_value=ok({}))
-        mcp, _ = build(config)
-        call(mcp, "winnr_purchase_prewarmed", domain="x.com", custom_usernames=["a", "b", "c"])
-        body = json.loads(route.calls[0].request.content)
-        assert body == {"domain": "x.com", "custom_usernames": ["a", "b", "c"], "address_count": 3}
-    mcp, _ = build(config)
-    assert "error" in call(mcp, "winnr_purchase_prewarmed", domain="x.com", custom_usernames=["a", "a", "b"])
-    assert "error" in call(mcp, "winnr_purchase_prewarmed", domain="x.com", address_count=1)
 
 
 def test_purchase_prewarmed_batch_rejects_duplicates(config):

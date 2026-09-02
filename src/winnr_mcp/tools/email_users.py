@@ -5,8 +5,10 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
+from winnr_mcp import scopes as sc
 from winnr_mcp.config import WinnrConfig
 from winnr_mcp.tools._common import (
+    winnr_tool,
     is_str,
     DESTRUCTIVE,
     READ,
@@ -27,7 +29,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_list_email_users(
         limit: int = 25,
         cursor: str | None = None,
@@ -51,7 +53,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
             params["filter[domain]"] = clean_domain(domain)
         return client.get("/v1/email-users", params=params).render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_get_email_user(user_id: str) -> str:
         """Get one email user (mailbox) by id.
 
@@ -65,10 +67,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    if not config.can_write:
-        return
-
-    @mcp.tool(annotations=WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE)
     def winnr_create_email_user(
         username: str,
         domain: str,
@@ -104,7 +103,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
             body["password"] = password
         return client.post("/v1/email-users", json_body=body).render()
 
-    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
     def winnr_update_email_user(
         user_id: str,
         name: str | None = None,
@@ -131,7 +130,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
             return tool_error("At least one field (name or password) must be provided.")
         return client.patch(f"/v1/email-users/{seg(user_id)}", json_body=body).render()
 
-    @mcp.tool(annotations=DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
     def winnr_delete_email_user(user_id: str) -> str:
         """Permanently delete a mailbox and all mail in it. Cannot be undone.
 
@@ -144,7 +143,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
         """
         return client.delete(f"/v1/email-users/{seg(user_id)}").render()
 
-    @mcp.tool(annotations=WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE)
     def winnr_bulk_create_email_users(domain: str, users: list[dict]) -> str:
         """Create up to 100 mailboxes on ONE domain in a single job.
 

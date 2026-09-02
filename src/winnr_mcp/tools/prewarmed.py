@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import json
+
 from mcp.server.fastmcp import FastMCP
 
+from winnr_mcp import scopes as sc
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import DESTRUCTIVE, PURCHASE, READ, clamp, clean_domain, is_str, tool_error, seg
+from winnr_mcp.tools._common import (
+    DESTRUCTIVE,
+    PURCHASE,
+    READ,
+    clamp,
+    clean_domain,
+    is_str,
+    money_line,
+    seg,
+    tool_error,
+    winnr_tool,
+)
 
 BLOCKLISTS = (
     "spamhaus_dbl",
@@ -25,6 +39,7 @@ MAX_ADDRESSES = 50
 MAX_CUSTOM_USERNAMES = 10
 MAX_BATCH = 25
 PURCHASE_TIMEOUT_SECONDS = 60
+PRICE_PER_ADDRESS = 3.0
 
 
 def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -32,7 +47,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_browse_prewarmed(
         search: str | None = None,
         sort_by: str = "health",
@@ -73,7 +88,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             params["include_all"] = "true"
         return client.get("/v1/prewarmed/browse", params=params).render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_get_prewarmed_domain(domain: str) -> str:
         """Full detail for one available pre-warmed domain.
 
@@ -88,7 +103,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             return tool_error("domain is required")
         return client.get(f"/v1/prewarmed/{seg(d)}").render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_check_prewarmed_blocklist(domain: str, blocklist: str | None = None) -> str:
         """Live blocklist check on a pre-warmed domain (all nine lists by default).
 
@@ -113,7 +128,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             params = {"list": bl}
         return client.post(f"/v1/prewarmed/{seg(d)}/blocklist-check", params=params).render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_list_my_prewarmed() -> str:
         """List the pre-warmed domains this account has bought, with purchase dates.
 
@@ -124,22 +139,24 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    if not config.can_write:
-        return
-
-    @mcp.tool(annotations=PURCHASE)
+    @winnr_tool(mcp, sc.PURCHASE, PURCHASE)
     def winnr_purchase_prewarmed(
         domain: str,
         address_count: int = MIN_ADDRESSES,
         custom_usernames: list[str] | None = None,
+        confirmation_token: str | None = None,
     ) -> str:
         """Buy pre-warmed addresses on ONE domain. CHARGES THE ACCOUNT'S CARD ON FILE.
+
+        Two-step, nothing is charged on the first call: without
+        confirmation_token you get a quote (domain still available, address
+        count, monthly total) and a token valid 10 minutes; show it, get an
+        explicit yes, call again with the same arguments plus the token.
 
         $3 per address per month, domain included, no minimum term. The first
         month is charged immediately; if the charge fails nothing is provisioned.
         Idempotent per domain: re-running a successful purchase returns
-        already_provisioned instead of charging again. Confirm domain, address
-        count and monthly total with the user before calling.
+        already_provisioned instead of charging again.
 
         Two modes:
         - Keep (default): you get the domain's existing warmed mailboxes,
@@ -164,6 +181,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
                 custom_usernames is given.
             custom_usernames: Optional 3-10 unique local-parts to provision as new
                 mailboxes instead of keeping the warmed ones.
+            confirmation_token: Token from the quote step, after the user said yes
         """
         d = clean_domain(domain)
         if not d:
@@ -181,19 +199,26 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             if not MIN_ADDRESSES <= int(address_count) <= MAX_ADDRESSES:
                 return tool_error(f"address_count must be {MIN_ADDRESSES}-{MAX_ADDRESSES}")
             body["address_count"] = int(address_count)
+
+        gate = _confirm_prewarmed(client, config, "purchase_prewarmed", [body], confirmation_token)
+        if gate is not None:
+            return gate
         return client.post(
             "/v1/prewarmed/purchase", json_body=body, timeout=PURCHASE_TIMEOUT_SECONDS
         ).render()
 
-    @mcp.tool(annotations=PURCHASE)
-    def winnr_purchase_prewarmed_batch(items: list[dict]) -> str:
+    @winnr_tool(mcp, sc.PURCHASE, PURCHASE)
+    def winnr_purchase_prewarmed_batch(items: list[dict], confirmation_token: str | None = None) -> str:
         """Buy pre-warmed addresses on SEVERAL domains as one order and one charge.
         CHARGES THE ACCOUNT'S CARD ON FILE.
 
+        Two-step like winnr_purchase_prewarmed: the first call (no
+        confirmation_token) only checks every domain is still available and
+        returns the quote + token; the second call with the token buys.
+
         All-or-nothing: every domain is claimed up front; if any was already sold
         or the charge fails, the whole order rolls back and nothing is billed.
-        Same terms as winnr_purchase_prewarmed. Confirm the full list and total
-        with the user first.
+        Same terms as winnr_purchase_prewarmed.
 
         Args:
             items: 1-25 order items, each:
@@ -202,6 +227,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
                 - custom_usernames (list[str], optional): 3-10 local-parts to
                   provision as new mailboxes instead of the warmed ones
                 Duplicate domains in one order are rejected.
+            confirmation_token: Token from the quote step, after the user said yes
         """
         if not items:
             return tool_error("items must contain at least one order item")
@@ -224,13 +250,30 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             if item.get("custom_usernames"):
                 entry["custom_usernames"] = item["custom_usernames"]
             order.append(entry)
+        for i, entry in enumerate(order):
+            if "custom_usernames" in entry:
+                names = [u.strip().lower() for u in entry["custom_usernames"] if is_str(u)]
+                if not MIN_ADDRESSES <= len(names) <= MAX_CUSTOM_USERNAMES or len(set(names)) != len(names):
+                    return tool_error(f"items[{i}].custom_usernames must be {MIN_ADDRESSES}-{MAX_CUSTOM_USERNAMES} unique names")
+                entry["custom_usernames"] = names
+                entry["address_count"] = len(names)
+            try:
+                count = int(entry.get("address_count"))
+            except (TypeError, ValueError):
+                return tool_error(f"items[{i}].address_count is required (3-50)")
+            if not MIN_ADDRESSES <= count <= MAX_ADDRESSES:
+                return tool_error(f"items[{i}].address_count must be {MIN_ADDRESSES}-{MAX_ADDRESSES}")
+            entry["address_count"] = count
+        gate = _confirm_prewarmed(client, config, "purchase_prewarmed_batch", order, confirmation_token)
+        if gate is not None:
+            return gate
         return client.post(
             "/v1/prewarmed/purchase-batch",
             json_body={"items": order},
             timeout=PURCHASE_TIMEOUT_SECONDS,
         ).render()
 
-    @mcp.tool(annotations=DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
     def winnr_cancel_prewarmed(domain: str) -> str:
         """Cancel a purchased pre-warmed domain and stop its billing. DESTRUCTIVE.
 
@@ -245,3 +288,55 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
         if not d:
             return tool_error("domain is required")
         return client.post("/v1/prewarmed/cancel", json_body={"domain": d}).render()
+
+
+def _confirm_prewarmed(client: WinnrClient, config: WinnrConfig, kind: str, order: list[dict], token: str | None) -> str | None:
+    """Quote → confirm gate shared by the two pre-warmed purchase tools.
+
+    Returns None when the caller may proceed with the purchase; otherwise the
+    JSON to return (a quote with a confirmation token, or an error).
+    """
+    lines = []
+    problems = []
+    for entry in order:
+        detail = client.get(f"/v1/prewarmed/{seg(entry['domain'])}")
+        if not detail.ok:
+            problems.append(f"{entry['domain']}: {detail.error_message}")
+            continue
+        data = detail.data if isinstance(detail.data, dict) else {}
+        available = data.get("address_count") or data.get("available_addresses") or len(data.get("addresses") or [])
+        if not entry.get("custom_usernames") and available and entry["address_count"] > int(available):
+            problems.append(f"{entry['domain']}: only {available} warmed addresses available, asked for {entry['address_count']}")
+        lines.append({
+            "domain": entry["domain"],
+            "address_count": entry["address_count"],
+            "custom_usernames": entry.get("custom_usernames"),
+            "monthly": round(entry["address_count"] * PRICE_PER_ADDRESS, 2),
+        })
+    if problems:
+        return tool_error("Cannot quote this order: " + "; ".join(problems), code="unavailable")
+    quote = {
+        "items": lines,
+        "price_per_address_per_month": PRICE_PER_ADDRESS,
+        "monthly_total": round(sum(x["monthly"] for x in lines), 2),
+        "note": "First month charged now; no minimum term; cancel any time.",
+    }
+    subject = client.account_id or ""
+    if not token:
+        tok, exp = config.confirmer.issue(kind, subject, quote)
+        return json.dumps({
+            "quote": quote,
+            "summary": f"Buy {sum(x['address_count'] for x in lines)} pre-warmed address(es) on {len(lines)} domain(s): "
+                       f"{money_line(quote['monthly_total'])}/month, first month charged now.",
+            "confirmation_token": tok,
+            "expires_at": exp,
+            "next_step": f"Show the quote to the user. After an explicit yes, call winnr_{kind} again with the same arguments and this confirmation_token.",
+        }, indent=2)
+    reason = config.confirmer.verify(token, kind, subject, quote)
+    if reason:
+        return tool_error(
+            f"Confirmation {reason}. Nothing was bought. Call without confirmation_token for a fresh quote.",
+            code="confirmation_invalid",
+            quote=quote,
+        )
+    return None
