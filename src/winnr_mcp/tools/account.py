@@ -5,14 +5,15 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
+from winnr_mcp import scopes as sc
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import READ
+from winnr_mcp.tools._common import READ, winnr_tool
 
 
 def register_account_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register account-related MCP tools."""
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_get_account() -> str:
         """Get the Winnr account this token belongs to: plan, limits and subscription status.
 
@@ -23,7 +24,7 @@ def register_account_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.get("/v1/account").render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_get_usage() -> str:
         """Get current usage vs. plan limits (domains, email users, pre-warmed addresses).
 

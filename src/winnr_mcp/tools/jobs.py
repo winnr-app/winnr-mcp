@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+import json
+import time
 
+from mcp.server.fastmcp import Context, FastMCP
+
+from winnr_mcp import scopes as sc
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import READ, clamp, is_str, seg, tool_error
+from winnr_mcp.tools._common import READ, clamp, is_str, seg, tool_error, winnr_tool
+
+TERMINAL = ("completed", "error", "failed", "cancelled")
+POLL_SECONDS = 3.0
 
 
 def register_job_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register job tracking MCP tools."""
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_list_jobs(limit: int = 25, status: str | None = None, job_type: str | None = None) -> str:
         """List recent async jobs (domain setup, purchases, mailbox creation/deletion), newest first.
 
@@ -33,18 +40,82 @@ def register_job_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -
             params["filter[type]"] = job_type.strip()
         return client.get("/v1/jobs", params=params).render()
 
-    @mcp.tool(annotations=READ)
+    @winnr_tool(mcp, sc.READ, READ)
     def winnr_get_job(job_id: str) -> str:
         """Get the status and progress of one async job.
 
         Returns job type, status (queued / in_progress / completed / error), progress,
         result (for purchases: the same payload a synchronous purchase returns), error,
-        and timestamps. Poll every 10-20 seconds; domain provisioning takes a few
-        minutes, mailbox creation about a minute.
+        and timestamps. For a blocking wait with progress updates use
+        winnr_wait_for_job instead of polling this in a loop.
 
         Args:
             job_id: The job ID returned by the tool that started the work
         """
-        if not job_id or not job_id.strip():
+        if not is_str(job_id):
             return tool_error("job_id is required")
         return client.get(f"/v1/jobs/{seg(job_id)}").render()
+
+    wait_doc = f"""Wait for an async job to finish, streaming progress while it runs.
+
+Blocks up to `timeout_seconds` (1-{config.max_wait_seconds} on this server), checking every
+few seconds and reporting progress notifications. Returns the final job when it reaches
+completed/error, or the latest snapshot with "timed_out": true if it is still running —
+call again to keep waiting. Domain provisioning takes a few minutes; mailbox creation
+about a minute.
+
+Args:
+    job_id: The job ID to wait for
+    timeout_seconds: How long to wait this call (1-{config.max_wait_seconds}, default 60)
+"""
+
+    @winnr_tool(mcp, sc.READ, READ, description=wait_doc)
+    async def winnr_wait_for_job(job_id: str, ctx: Context, timeout_seconds: int = 60) -> str:
+        if not is_str(job_id):
+            return tool_error("job_id is required")
+        budget = clamp(timeout_seconds, 1, config.max_wait_seconds)
+        deadline = time.monotonic() + budget
+        path = f"/v1/jobs/{seg(job_id)}"
+        last: dict | None = None
+        polls = 0
+        while True:
+            response = client.get(path)
+            if not response.ok:
+                return response.error_json()
+            last = response.data if isinstance(response.data, dict) else {"raw": response.data}
+            polls += 1
+            status = str(last.get("status") or "").lower()
+            progress = last.get("progress")
+            pct = _progress_pct(progress, status)
+            try:
+                await ctx.report_progress(pct, 100, f"{job_id}: {status or 'unknown'}")
+            except Exception:  # noqa: BLE001 — progress is best-effort
+                pass
+            if status in TERMINAL:
+                return json.dumps({"data": last, "polls": polls}, indent=2, default=str)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return json.dumps(
+                    {"data": last, "timed_out": True, "waited_seconds": budget, "polls": polls,
+                     "note": "Still running. Call winnr_wait_for_job again to keep waiting."},
+                    indent=2, default=str,
+                )
+            time.sleep(min(POLL_SECONDS, remaining))
+
+
+
+def _progress_pct(progress: object, status: str) -> float:
+    if status in ("completed",):
+        return 100.0
+    if isinstance(progress, dict):
+        done, total = progress.get("completed") or progress.get("done"), progress.get("total")
+        try:
+            if total:
+                return max(0.0, min(99.0, 100.0 * float(done or 0) / float(total)))
+        except (TypeError, ValueError):
+            pass
+        if isinstance(progress.get("percent"), (int, float)):
+            return max(0.0, min(99.0, float(progress["percent"])))
+    if isinstance(progress, (int, float)):
+        return max(0.0, min(99.0, float(progress)))
+    return 50.0 if status == "in_progress" else 5.0

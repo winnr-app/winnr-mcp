@@ -7,6 +7,8 @@ import os
 import sys
 from dataclasses import dataclass, field
 
+from winnr_mcp.confirm import Confirmer
+
 
 DEFAULT_API_URL = "https://api.winnr.app"
 DEFAULT_TIMEOUT = 30
@@ -28,6 +30,13 @@ class WinnrConfig:
     account_name: str | None = None
     plan: str | None = None
     token_name: str | None = None
+    # --no-purchases / WINNR_NO_PURCHASES: keep write access but never spend money.
+    allow_purchases: bool = True
+    # Signs the quote → confirm tokens for money tools. Random per process for
+    # stdio; the remote server injects a shared secret so any instance can verify.
+    confirmer: Confirmer = field(default_factory=Confirmer)
+    # Longest a single winnr_wait_for_job call may block (remote: API Gateway's 30s).
+    max_wait_seconds: int = 90
 
     @property
     def can_write(self) -> bool:
@@ -56,6 +65,11 @@ def load_config(argv: list[str] | None = None) -> WinnrConfig:
         "--read-only",
         action="store_true",
         help="Only register read tools (hides every tool that can change or buy anything)",
+    )
+    parser.add_argument(
+        "--no-purchases",
+        action="store_true",
+        help="Keep write access but hide the four tools that charge the card",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {_package_version()}"
@@ -95,12 +109,18 @@ def load_config(argv: list[str] | None = None) -> WinnrConfig:
 
     read_only = args.read_only or _env_flag("WINNR_READ_ONLY")
     permissions = ["read"] if read_only else ["read", "write"]
+    allow_purchases = not (args.no_purchases or _env_flag("WINNR_NO_PURCHASES"))
+
+    confirm_secret = os.environ.get("WINNR_CONFIRM_SECRET", "").strip()
+    confirmer = Confirmer(confirm_secret.encode()) if confirm_secret else Confirmer()
 
     return WinnrConfig(
         api_token=api_token,
         api_url=api_url.rstrip("/"),
         timeout=timeout,
         permissions=permissions,
+        allow_purchases=allow_purchases,
+        confirmer=confirmer,
     )
 
 

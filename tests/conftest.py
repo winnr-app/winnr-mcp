@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 import httpx
 import pytest
 
+from winnr_mcp import scopes as sc
+
 from winnr_mcp.config import WinnrConfig
+
+
+@pytest.fixture(autouse=True)
+def _all_scopes():
+    """Tests run as a full-access session unless they narrow it with scoped()."""
+    sc.set_default_scope_provider(lambda: frozenset(sc.ALL_SCOPES))
+    yield
+    sc.set_default_scope_provider(lambda: frozenset())
+
+
+@contextmanager
+def scoped(*scopes: str):
+    token = sc.set_request_scopes(scopes)
+    try:
+        yield
+    finally:
+        sc.reset_request_scopes(token)
 
 
 @pytest.fixture

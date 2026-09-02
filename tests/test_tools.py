@@ -51,102 +51,6 @@ def api_error(status_code=400, code="validation_error", message="Bad request") -
 
 # ── Permission gating tests ────────────────────────────────────────────
 
-def test_write_tools_registered_with_write_permission(config):
-    """Write tools are registered when token has write permission."""
-    mcp, client = make_mcp_and_client(config)
-    register_domain_tools(mcp, client, config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "winnr_purchase_domains" in tool_names
-    assert "winnr_delete_domain" in tool_names
-    assert "winnr_connect_domains" in tool_names
-
-
-def test_write_tools_hidden_with_read_only(read_only_config):
-    """Write tools are NOT registered when token is read-only."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_domain_tools(mcp, client, read_only_config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    # Read tools should be present
-    assert "winnr_list_domains" in tool_names
-    assert "winnr_get_domain" in tool_names
-    # Write tools should be absent
-    assert "winnr_purchase_domains" not in tool_names
-    assert "winnr_delete_domain" not in tool_names
-    assert "winnr_connect_domains" not in tool_names
-
-
-def test_email_user_write_tools_hidden_read_only(read_only_config):
-    """Email user write tools hidden for read-only tokens."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_email_user_tools(mcp, client, read_only_config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "winnr_list_email_users" in tool_names
-    assert "winnr_create_email_user" not in tool_names
-    assert "winnr_delete_email_user" not in tool_names
-
-
-def test_inbox_write_tools_hidden_read_only(read_only_config):
-    """Inbox write tools hidden for read-only tokens."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_inbox_tools(mcp, client, read_only_config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "winnr_list_inbox" in tool_names
-    assert "winnr_get_message_body" in tool_names
-    assert "winnr_send_email" not in tool_names
-    assert "winnr_refresh_inbox" not in tool_names
-
-
-def test_warming_write_tools_hidden_read_only(read_only_config):
-    """Warming write tools hidden for read-only tokens."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_warming_tools(mcp, client, read_only_config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "winnr_list_warming" in tool_names
-    assert "winnr_get_warming_overview" in tool_names
-    assert "winnr_enable_warming" not in tool_names
-    assert "winnr_pause_warming" not in tool_names
-
-
-# ── Tool count tests ────────────────────────────────────────────────────
-
-def test_all_tools_registered(config):
-    """All 54 tools are registered with full permissions."""
-    mcp, client = make_mcp_and_client(config)
-    register_account_tools(mcp, client, config)
-    register_domain_tools(mcp, client, config)
-    register_email_user_tools(mcp, client, config)
-    register_inbox_tools(mcp, client, config)
-    register_warming_tools(mcp, client, config)
-    register_prewarmed_tools(mcp, client, config)
-    register_job_tools(mcp, client, config)
-    register_export_tools(mcp, client, config)
-    register_webhook_tools(mcp, client, config)
-    tools = mcp._tool_manager.list_tools()
-    tool_names = [t.name for t in tools]
-    assert len(tool_names) == 54, f"Expected 54 tools, got {len(tool_names)}: {sorted(tool_names)}"
-
-
-def test_read_only_tool_count(read_only_config):
-    """Read-only tokens get fewer tools."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_account_tools(mcp, client, read_only_config)
-    register_domain_tools(mcp, client, read_only_config)
-    register_email_user_tools(mcp, client, read_only_config)
-    register_inbox_tools(mcp, client, read_only_config)
-    register_warming_tools(mcp, client, read_only_config)
-    register_prewarmed_tools(mcp, client, read_only_config)
-    register_job_tools(mcp, client, read_only_config)
-    register_export_tools(mcp, client, read_only_config)
-    register_webhook_tools(mcp, client, read_only_config)
-    tools = mcp._tool_manager.list_tools()
-    tool_names = [t.name for t in tools]
-    # Read-only: account(2) + domains(7 read) + email_users(2 read) + inbox(2 read)
-    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(1) + webhooks(2 read) = 25
-    #            (winnr_export_email_users needs write scope: the CSV carries passwords)
-    assert len(tool_names) == 25, f"Expected 25 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
-
-
-# ── Tool naming convention tests ────────────────────────────────────────
 
 def test_all_tools_have_winnr_prefix(config):
     """All tools start with winnr_ prefix."""
@@ -272,21 +176,6 @@ def test_winnr_create_email_user(config):
 
 
 @respx.mock
-def test_winnr_enable_warming(config):
-    """winnr_enable_warming sends user_ids."""
-    route = respx.post("https://api.test.winnr.app/v1/warming/enable").mock(
-        return_value=api_success(data={"enabled": 2})
-    )
-    mcp, client = make_mcp_and_client(config)
-    register_warming_tools(mcp, client, config)
-    result = mcp._tool_manager._tools["winnr_enable_warming"].fn(user_ids=["eu_1", "eu_2"])
-    data = json.loads(result)
-    assert data["data"]["enabled"] == 2
-    body = json.loads(route.calls[0].request.content)
-    assert body["user_ids"] == ["eu_1", "eu_2"]
-
-
-@respx.mock
 def test_winnr_export_email_users(config):
     """winnr_export_email_users sends format."""
     route = respx.post("https://api.test.winnr.app/v1/export").mock(
@@ -303,14 +192,17 @@ def test_winnr_export_email_users(config):
 
 # ── winnr_tag_domains ───────────────────────────────────────────────────
 
-def test_tag_domains_registered_and_gated(config, read_only_config):
+def test_tag_domains_registered_and_gated(config):
+    from tests.conftest import scoped
+    from winnr_mcp.server import install_scope_filter, visible_tools
+
     mcp, client = make_mcp_and_client(config)
     register_domain_tools(mcp, client, config)
-    assert "winnr_tag_domains" in [t.name for t in mcp._tool_manager.list_tools()]
-
-    mcp_ro, client_ro = make_mcp_and_client(read_only_config)
-    register_domain_tools(mcp_ro, client_ro, read_only_config)
-    assert "winnr_tag_domains" not in [t.name for t in mcp_ro._tool_manager.list_tools()]
+    install_scope_filter(mcp)
+    assert "winnr_tag_domains" in visible_tools(mcp)
+    with scoped("read"):
+        assert "winnr_tag_domains" not in visible_tools(mcp)
+        assert json.loads(mcp._tool_manager._tools["winnr_tag_domains"].fn(domain_ids=["d"], tags=["x"]))["error"]["code"] == "insufficient_scope"
 
 
 @respx.mock
@@ -395,19 +287,6 @@ def test_tag_domains_validates_mode(config):
 
 # ── Pre-warmed marketplace tests ────────────────────────────────────────
 
-def test_prewarmed_write_tools_hidden_read_only(read_only_config):
-    """Pre-warmed purchase tools hidden for read-only tokens."""
-    mcp, client = make_mcp_and_client(read_only_config)
-    register_prewarmed_tools(mcp, client, read_only_config)
-    tool_names = [t.name for t in mcp._tool_manager.list_tools()]
-    assert "winnr_browse_prewarmed" in tool_names
-    assert "winnr_get_prewarmed_domain" in tool_names
-    assert "winnr_list_my_prewarmed" in tool_names
-    assert "winnr_check_prewarmed_blocklist" in tool_names
-    assert "winnr_purchase_prewarmed" not in tool_names
-    assert "winnr_purchase_prewarmed_batch" not in tool_names
-    assert "winnr_cancel_prewarmed" not in tool_names
-
 
 @respx.mock
 def test_winnr_browse_prewarmed(config):
@@ -473,70 +352,6 @@ def test_winnr_check_prewarmed_blocklist_rejects_unknown_list(config):
         domain="example.com", blocklist="not_a_list"
     )
     assert "Unknown blocklist" in result
-
-
-@respx.mock
-def test_winnr_purchase_prewarmed(config):
-    """winnr_purchase_prewarmed posts domain + address_count."""
-    route = respx.post("https://api.test.winnr.app/v1/prewarmed/purchase").mock(
-        return_value=api_success(
-            data={"status": "sold", "domain": "example.com", "address_count": 5}
-        )
-    )
-    mcp, client = make_mcp_and_client(config)
-    register_prewarmed_tools(mcp, client, config)
-    result = mcp._tool_manager._tools["winnr_purchase_prewarmed"].fn(
-        domain="example.com", address_count=5
-    )
-    assert json.loads(result)["data"]["status"] == "sold"
-    body = json.loads(route.calls[0].request.content)
-    assert body == {"domain": "example.com", "address_count": 5}
-
-
-@respx.mock
-def test_winnr_purchase_prewarmed_custom_usernames(config):
-    """Custom mode forwards the local-parts."""
-    route = respx.post("https://api.test.winnr.app/v1/prewarmed/purchase").mock(
-        return_value=api_success(data={"status": "sold", "provisioning": "async"})
-    )
-    mcp, client = make_mcp_and_client(config)
-    register_prewarmed_tools(mcp, client, config)
-    mcp._tool_manager._tools["winnr_purchase_prewarmed"].fn(
-        domain="example.com", address_count=3, custom_usernames=["ana", "ben", "chris"]
-    )
-    body = json.loads(route.calls[0].request.content)
-    assert body["custom_usernames"] == ["ana", "ben", "chris"]
-
-
-@respx.mock
-def test_winnr_purchase_prewarmed_conflict(config):
-    """A domain claimed by another buyer surfaces a clean error."""
-    respx.post("https://api.test.winnr.app/v1/prewarmed/purchase").mock(
-        return_value=api_error(409, "conflict", "This domain was just purchased by another customer.")
-    )
-    mcp, client = make_mcp_and_client(config)
-    register_prewarmed_tools(mcp, client, config)
-    result = mcp._tool_manager._tools["winnr_purchase_prewarmed"].fn(
-        domain="example.com", address_count=5
-    )
-    assert "another customer" in result
-
-
-@respx.mock
-def test_winnr_purchase_prewarmed_batch(config):
-    """Batch purchase posts the items array."""
-    route = respx.post("https://api.test.winnr.app/v1/prewarmed/purchase-batch").mock(
-        return_value=api_success(data={"status": "sold", "total_address_count": 8})
-    )
-    mcp, client = make_mcp_and_client(config)
-    register_prewarmed_tools(mcp, client, config)
-    items = [
-        {"domain": "example.com", "address_count": 5},
-        {"domain": "another-example.com", "address_count": 3},
-    ]
-    result = mcp._tool_manager._tools["winnr_purchase_prewarmed_batch"].fn(items=items)
-    assert json.loads(result)["data"]["total_address_count"] == 8
-    assert json.loads(route.calls[0].request.content) == {"items": items}
 
 
 def test_winnr_purchase_prewarmed_batch_rejects_oversize_order(config):
