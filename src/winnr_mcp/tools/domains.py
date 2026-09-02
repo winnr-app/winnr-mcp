@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
 from winnr_mcp.tools._common import (
+    is_str,
     DESTRUCTIVE,
     PURCHASE,
     READ,
@@ -17,14 +18,20 @@ from winnr_mcp.tools._common import (
     clamp,
     clean_domain,
     tool_error,
+    seg,
 )
 
-DOMAIN_STATUSES = ("active", "pending", "pending_ns", "disabled", "error", "deleting")
+# Domain doc statuses (winnr-api/docs/FIREBASE_SCHEMA.md). "complete" = ready to use.
+DOMAIN_STATUSES = ("pending", "pending_ns", "pending_dns_records", "in_progress", "complete", "error", "deleting")
+# /v1/domains/check-provider probes at most this many per call.
+MAX_PROVIDER_CHECK = 20
 MAX_SEARCH_BULK = 100
 MAX_PURCHASE = 100
 MAX_TAG_DOMAINS = 50
 # Purchases run Stripe + registrar calls; give them more than the default.
 PURCHASE_TIMEOUT_SECONDS = 60
+# Only these per-domain fields are forwarded to POST /v1/domains/purchase.
+PURCHASE_ENTRY_KEYS = ("domain", "price", "register", "setup_dns", "setup_email", "users", "redirect_url", "tags")
 
 
 def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -47,7 +54,8 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             limit: Page size (1-100, default 25)
             cursor: Pagination cursor from a previous response
-            status: Optional status filter: active, pending, pending_ns, disabled, error
+            status: Optional filter: complete (ready), pending, pending_ns, pending_dns_records,
+                in_progress, error, deleting
         """
         params: dict = {"limit": clamp(limit, 1, 100)}
         if cursor:
@@ -66,14 +74,14 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             domain_id: The domain ID (from winnr_list_domains)
         """
-        return client.get(f"/v1/domains/{domain_id}").render()
+        return client.get(f"/v1/domains/{seg(domain_id)}").render()
 
     @mcp.tool(annotations=READ)
     def winnr_search_domains(domain: str) -> str:
         """Check whether ONE domain is available to register, with Winnr's price in USD.
 
-        Price = registrar cost rounded up + $1. Some TLDs are blocked for cold
-        email and come back unavailable with a reason. For several names at once
+        Price = registrar cost rounded up + $1, quoted live from the registrar.
+        Some TLDs are blocked for cold email and come back unavailable with a reason. For several names at once
         use winnr_search_domains_bulk.
 
         Args:
@@ -110,7 +118,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             domain_id: The domain ID
         """
-        return client.get(f"/v1/domains/{domain_id}/dns-status").render()
+        return client.get(f"/v1/domains/{seg(domain_id)}/dns-status").render()
 
     @mcp.tool(annotations=READ)
     def winnr_get_dns_records(domain_id: str) -> str:
@@ -122,7 +130,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             domain_id: The domain ID
         """
-        return client.get(f"/v1/domains/{domain_id}/dns-records").render()
+        return client.get(f"/v1/domains/{seg(domain_id)}/dns-records").render()
 
     @mcp.tool(annotations=READ)
     def winnr_check_dns_provider(domains: list[str]) -> str:
@@ -133,13 +141,13 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         or whether Cloudflare is already in play.
 
         Args:
-            domains: Domain names to inspect (1-100)
+            domains: Domain names to inspect (1-20 per call)
         """
-        cleaned = [clean_domain(d) for d in (domains or []) if d and d.strip()]
+        cleaned = [clean_domain(d) for d in (domains or []) if is_str(d)]
         if not cleaned:
             return tool_error("domains must contain at least one domain name")
-        if len(cleaned) > MAX_SEARCH_BULK:
-            return tool_error(f"Maximum {MAX_SEARCH_BULK} domains per call, got {len(cleaned)}")
+        if len(cleaned) > MAX_PROVIDER_CHECK:
+            return tool_error(f"Maximum {MAX_PROVIDER_CHECK} domains per call, got {len(cleaned)}")
         return client.post("/v1/domains/check-provider", json_body={"domains": cleaned}).render()
 
     # ── Write tools (only if token has write permission) ────────────────
@@ -151,9 +159,14 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
     def winnr_purchase_domains(domains: list[dict]) -> str:
         """Buy and fully set up new domains. CHARGES THE ACCOUNT'S CARD ON FILE.
 
-        Price per domain = registrar cost rounded up + $1 (from winnr_search_domains).
-        Plan domain credits are applied first. Get an explicit yes from the user
-        with the exact list and total before calling.
+        Price per domain = registrar cost rounded up + $1. The API always charges
+        the LIVE registrar price at purchase time. If you pass `price` (the value
+        from winnr_search_domains_bulk), this tool re-checks availability and price
+        immediately before ordering and refuses the whole order if any domain is
+        no longer available or now costs more than quoted, so the number you
+        confirmed with the user is the number charged. Plan domain credits are
+        applied first. Get an explicit yes from the user with the exact list and
+        total before calling.
 
         Asynchronous: returns a job_id (HTTP 202). Poll winnr_get_job — the job's
         `result` is the full purchase receipt; an `error` of payment_failed carries
@@ -167,8 +180,8 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             domains: 1-100 objects, each with:
                 - domain (str, required): e.g. "acmehq.com"
-                - price (float, recommended): expected USD price from the search
-                  tool; the order is rejected if the live price is higher
+                - price (float, strongly recommended): USD price the user agreed
+                  to; the order is refused if the live price is now higher
                 - users (list[dict], optional): mailboxes to create, each with
                   "username" and "name" (2-5 per domain recommended)
                 - redirect_url (str, optional): forward the website to this URL
@@ -180,11 +193,25 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             return tool_error(f"Maximum {MAX_PURCHASE} domains per order, got {len(domains)}")
         order = []
         for i, entry in enumerate(domains):
-            if not isinstance(entry, dict) or not (entry.get("domain") or "").strip():
+            if not isinstance(entry, dict) or not is_str(entry.get("domain")):
                 return tool_error(f"domains[{i}] must be an object with a 'domain' field")
-            item = dict(entry)
+            item = {k: entry[k] for k in PURCHASE_ENTRY_KEYS if k in entry}
             item["domain"] = clean_domain(entry["domain"])
+            if "price" in item:
+                try:
+                    item["price"] = float(item["price"])
+                except (TypeError, ValueError):
+                    return tool_error(f"domains[{i}].price must be a number")
             order.append(item)
+        seen: set[str] = set()
+        for item in order:
+            if item["domain"] in seen:
+                return tool_error(f"Duplicate domain in order: {item['domain']}")
+            seen.add(item["domain"])
+
+        guard = _price_guard(client, order)
+        if guard:
+            return guard
         return client.post(
             "/v1/domains/purchase",
             json_body={"domains": order, "async": True},
@@ -277,7 +304,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             domain_id: The domain ID to delete
         """
-        return client.delete(f"/v1/domains/{domain_id}").render()
+        return client.delete(f"/v1/domains/{seg(domain_id)}").render()
 
     @mcp.tool(annotations=WRITE_IDEMPOTENT)
     def winnr_tag_domains(domain_ids: list[str], tags: list[str], mode: str = "add") -> str:
@@ -308,7 +335,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
                 new_tags = cleaned
             else:
                 # read-modify-write: PATCH replaces the whole list
-                current_resp = client.get(f"/v1/domains/{domain_id}")
+                current_resp = client.get(f"/v1/domains/{seg(domain_id)}")
                 if not current_resp.ok:
                     results.append({
                         "domain_id": domain_id, "ok": False,
@@ -320,7 +347,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
                     new_tags = current + [t for t in cleaned if t not in current]
                 else:  # remove
                     new_tags = [t for t in current if t not in cleaned]
-            patch_resp = client.patch(f"/v1/domains/{domain_id}", json_body={"tags": new_tags})
+            patch_resp = client.patch(f"/v1/domains/{seg(domain_id)}", json_body={"tags": new_tags})
             if not patch_resp.ok:
                 results.append({
                     "domain_id": domain_id, "ok": False,
@@ -345,7 +372,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         Args:
             domain_id: The domain ID
         """
-        return client.post(f"/v1/domains/{domain_id}/verify-dns").render()
+        return client.post(f"/v1/domains/{seg(domain_id)}/verify-dns").render()
 
     @mcp.tool(annotations=WRITE_IDEMPOTENT)
     def winnr_check_nameservers(domains: list[str]) -> str:
@@ -363,3 +390,43 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         if not cleaned:
             return tool_error("domains must contain at least one domain name")
         return client.post("/v1/domains/check-ns", json_body={"domains": cleaned}).render()
+
+
+def _price_guard(client: WinnrClient, order: list[dict]) -> str | None:
+    """Refuse the order if any quoted domain is gone or costs more than quoted.
+
+    The API charges the live registrar price and never compares it with the
+    client's `price`, so the promise "you will pay $X" is kept here: one bulk
+    search right before the purchase. Fails closed — if the check itself fails,
+    nothing is bought.
+    """
+    quoted = {o["domain"]: o["price"] for o in order if o.get("register", True) and "price" in o}
+    if not quoted:
+        return None
+    check = client.post("/v1/domains/search-bulk", json_body={"domains": sorted(quoted)})
+    if not check.ok:
+        return tool_error(
+            "Could not re-verify prices before purchase, so nothing was bought: "
+            f"{check.error_message}",
+            code="price_check_failed",
+        )
+    results = (check.data or {}).get("results") if isinstance(check.data, dict) else None
+    live = {}
+    for r in results or []:
+        if isinstance(r, dict) and is_str(r.get("domain")):
+            live[clean_domain(r["domain"])] = r
+    problems = []
+    for domain, price in quoted.items():
+        r = live.get(domain)
+        if r is None:
+            problems.append(f"{domain}: no availability result")
+        elif not r.get("available"):
+            problems.append(f"{domain}: no longer available ({r.get('error') or 'taken'})")
+        elif r.get("price") is not None and float(r["price"]) > price + 1e-9:
+            problems.append(f"{domain}: now ${r['price']} (quoted ${price})")
+    if problems:
+        return tool_error(
+            "Purchase refused — re-quote and confirm with the user first: " + "; ".join(problems),
+            code="price_changed",
+        )
+    return None

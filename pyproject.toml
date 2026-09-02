@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.24,<1.28"]  # 1.28+ emits Metadata-Version 2.5, which twine 6.2 rejects
 build-backend = "hatchling.build"
 
 [project]

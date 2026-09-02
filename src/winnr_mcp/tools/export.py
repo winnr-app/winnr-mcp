@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import READ, clean_domain, tool_error
+from winnr_mcp.tools._common import READ, WRITE_IDEMPOTENT, clean_domain, is_str, tool_error
 
 # Mirrors SUPPORTED_FORMATS in the API. Kept here so a typo fails locally with
 # the full list instead of a round trip.
@@ -30,7 +30,12 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.get("/v1/export/formats").render()
 
-    @mcp.tool(annotations=READ)
+    if not config.can_write:
+        return
+
+    # Registered for read/write tokens only: the API requires write scope for
+    # POST /v1/export because the CSV contains mailbox passwords.
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
     def winnr_export_email_users(
         format: str = "default",
         domains: list[str] | None = None,
@@ -40,8 +45,9 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """Export mailbox credentials (address, password, IMAP/SMTP hosts) to CSV.
 
         Returns a download URL valid for 15 minutes — this is the ONLY way to get
-        passwords out of Winnr; list tools never include them. Give the user the
-        link rather than pasting credentials into the conversation.
+        passwords out of Winnr; list tools never include them. Needs a read/write
+        token. Give the user the link rather than pasting credentials into the
+        conversation.
 
         Formats: default, smartlead, instantly, snov, saleshandy, plusvibe,
         emailbison, manyreach, warmy, warmysender, reply.io, smartreach, reachinbox,
@@ -66,9 +72,9 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             return tool_error("Provide domains, emails, or all_domains=true.")
         body: dict = {"format": fmt}
         if domains:
-            body["domains"] = [clean_domain(d) for d in domains if d and d.strip()]
+            body["domains"] = [clean_domain(d) for d in domains if is_str(d)]
         if emails:
-            body["emails"] = [e.strip().lower() for e in emails if e and e.strip()]
+            body["emails"] = [e.strip().lower() for e in emails if is_str(e)]
         if all_domains:
             body["getAllDomains"] = True
         return client.post("/v1/export", json_body=body).render()

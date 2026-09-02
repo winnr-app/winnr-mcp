@@ -141,8 +141,9 @@ def test_read_only_tool_count(read_only_config):
     tools = mcp._tool_manager.list_tools()
     tool_names = [t.name for t in tools]
     # Read-only: account(2) + domains(7 read) + email_users(2 read) + inbox(2 read)
-    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(2) + webhooks(2 read) = 26
-    assert len(tool_names) == 26, f"Expected 26 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
+    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(1) + webhooks(2 read) = 25
+    #            (winnr_export_email_users needs write scope: the CSV carries passwords)
+    assert len(tool_names) == 25, f"Expected 25 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
 
 
 # ── Tool naming convention tests ────────────────────────────────────────
@@ -556,7 +557,7 @@ def test_winnr_purchase_prewarmed_batch_rejects_empty_order(config):
 
 
 @respx.mock
-def test_winnr_cancel_prewarmed_inside_minimum_term(config):
+def test_winnr_cancel_prewarmed_api_error_passthrough(config):
     """Cancelling inside the 90-day term surfaces the API's explanation."""
     respx.post("https://api.test.winnr.app/v1/prewarmed/cancel").mock(
         return_value=api_error(

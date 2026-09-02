@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import DESTRUCTIVE, PURCHASE, READ, clamp, clean_domain, tool_error
+from winnr_mcp.tools._common import DESTRUCTIVE, PURCHASE, READ, clamp, clean_domain, is_str, tool_error, seg
 
 BLOCKLISTS = (
     "spamhaus_dbl",
@@ -86,7 +86,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
         d = clean_domain(domain)
         if not d:
             return tool_error("domain is required")
-        return client.get(f"/v1/prewarmed/{d}").render()
+        return client.get(f"/v1/prewarmed/{seg(d)}").render()
 
     @mcp.tool(annotations=READ)
     def winnr_check_prewarmed_blocklist(domain: str, blocklist: str | None = None) -> str:
@@ -111,7 +111,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             if bl not in BLOCKLISTS:
                 return tool_error(f"Unknown blocklist '{blocklist}'. Valid: {', '.join(BLOCKLISTS)}")
             params = {"list": bl}
-        return client.post(f"/v1/prewarmed/{d}/blocklist-check", params=params).render()
+        return client.post(f"/v1/prewarmed/{seg(d)}/blocklist-check", params=params).render()
 
     @mcp.tool(annotations=READ)
     def winnr_list_my_prewarmed() -> str:
@@ -170,7 +170,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             return tool_error("domain is required")
         body: dict = {"domain": d}
         if custom_usernames:
-            names = [u.strip().lower() for u in custom_usernames if u and u.strip()]
+            names = [u.strip().lower() for u in custom_usernames if is_str(u)]
             if not MIN_ADDRESSES <= len(names) <= MAX_CUSTOM_USERNAMES:
                 return tool_error(f"custom_usernames must contain {MIN_ADDRESSES}-{MAX_CUSTOM_USERNAMES} names")
             if len(set(names)) != len(names):
@@ -212,14 +212,17 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
         order = []
         seen: set[str] = set()
         for i, item in enumerate(items):
-            if not isinstance(item, dict) or not (item.get("domain") or "").strip():
+            if not isinstance(item, dict) or not is_str(item.get("domain")):
                 return tool_error(f"items[{i}] must be an object with a 'domain'")
             d = clean_domain(item["domain"])
             if d in seen:
-                return tool_error(f"Duplicate domain in order: {d}")
+                return tool_error(f"Duplicate domain in order: {seg(d)}")
             seen.add(d)
-            entry = dict(item)
-            entry["domain"] = d
+            entry: dict = {"domain": d}
+            if "address_count" in item:
+                entry["address_count"] = item["address_count"]
+            if item.get("custom_usernames"):
+                entry["custom_usernames"] = item["custom_usernames"]
             order.append(entry)
         return client.post(
             "/v1/prewarmed/purchase-batch",

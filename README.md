@@ -9,7 +9,7 @@ inbox, pre-warmed marketplace and webhooks through natural language.
 **Fastest setup:** log in and open **[app.winnr.app/mcp](https://app.winnr.app/mcp)** —
 it creates the token, writes the config for your client, and confirms the connection.
 
-**54 tools**, 26 of them read-only. One Python package, no local state, nothing but HTTPS
+**54 tools**, 25 of them read-only. One Python package, no local state, nothing but HTTPS
 calls to `api.winnr.app`.
 
 ---
@@ -128,7 +128,9 @@ instructions cover:
 
 - IDs and async jobs (`job_id` → poll `winnr_get_job`)
 - The four tools that charge the card (domain purchase, pre-warmed purchase ×2, warming
-  enable) and the rule to get an explicit yes with the exact price first
+  enable) and the rule to get an explicit yes with the exact price first. Domain purchases
+  re-check availability and price right before ordering and refuse the order if anything
+  changed, so the confirmed total is the charged total
 - Never retrying a purchase after a timeout without checking `winnr_list_jobs`
 - Domain-name hygiene (brand-like names; no outreach/blast/bulk words)
 - Cold-email ratios (2–5 mailboxes per domain, warm 2–3 weeks, modest daily sends)
@@ -143,23 +145,23 @@ Permission is the token scope the tool needs. Read tools are visible to every to
 |------|-------------|------------|
 | `winnr_get_account` | Account, plan, limits, and the calling token's scope | read |
 | `winnr_get_usage` | Domains / email users / pre-warmed addresses vs limits | read |
-| `winnr_list_jobs` | Recent async jobs | read |
+| `winnr_list_jobs` | Recent async jobs (status / type filters) | read |
 | `winnr_get_job` | One job's status, progress, result, error | read |
 | `winnr_list_export_formats` | Supported CSV formats | read |
-| `winnr_export_email_users` | CSV of credentials (15-minute link), 22 sequencer formats | read |
+| `winnr_export_email_users` | CSV of credentials (15-minute link), 22 sequencer formats | write |
 
 ### Domains
 
 | Tool | Description | Permission |
 |------|-------------|------------|
-| `winnr_list_domains` | List domains (paginated, optional status filter) | read |
+| `winnr_list_domains` | List domains (paginated, optional status filter: complete, pending, …) | read |
 | `winnr_get_domain` | One domain with DNS status and live health | read |
 | `winnr_search_domains` | Availability + price for one name | read |
 | `winnr_search_domains_bulk` | Availability + price for up to 100 names | read |
 | `winnr_get_dns_status` | Provisioning/propagation state (MX, SPF, DKIM, DMARC) | read |
 | `winnr_get_dns_records` | Records to add for manual-DNS domains | read |
-| `winnr_check_dns_provider` | Where a domain's DNS is hosted today | read |
-| `winnr_purchase_domains` | Buy + set up domains, async job (**charges card**) | write |
+| `winnr_check_dns_provider` | Where a domain's DNS is hosted today (≤20 per call) | read |
+| `winnr_purchase_domains` | Buy + set up domains, async job; re-verifies quoted prices first (**charges card**) | write |
 | `winnr_setup_domain` | Re-run DNS/mail provisioning, add mailboxes/redirect | write |
 | `winnr_connect_domains` | Bring your own domains (nameserver, manual DNS, or Cloudflare token) | write |
 | `winnr_check_nameservers` | Verify NS change; auto-queues provisioning | write |
@@ -241,7 +243,7 @@ scope; 429s on reads are retried once automatically.
 - **Token-scoped.** Everything runs as one account, with the token's permissions.
   Revoke it in the dashboard and the assistant is cut off instantly.
 - **Passwords never appear in tool output.** Credentials leave only through
-  `winnr_export_email_users`, a 15-minute presigned CSV link.
+  `winnr_export_email_users`, a 15-minute presigned CSV link that needs a read/write token.
 - **Nothing is logged.** The token is sent as a bearer header and never printed;
   the server writes one startup line to stderr.
 - **Rate limits** are the API's (300 req/min Startup, 500 Enterprise). The server
@@ -254,7 +256,7 @@ git clone https://github.com/winnr-app/winnr-mcp.git
 cd winnr-mcp
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 92 tests, all HTTP mocked
+pytest          # 102 tests, all HTTP mocked
 ruff check src tests
 WINNR_API_TOKEN=wnr_xxx python -m winnr_mcp   # run locally over stdio
 ```

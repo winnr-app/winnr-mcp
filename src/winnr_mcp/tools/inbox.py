@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import MAX_BODY_LENGTH, WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, clamp, tool_error
+from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, clamp, tool_error, seg
 
 
 def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -72,7 +72,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
         if not mailbox or "@" not in mailbox:
             return tool_error("mailbox is required and must be the receiving email address")
         response = client.get(
-            f"/v1/inbox/{uid}/body", params={"mailbox": mailbox.strip().lower()}
+            f"/v1/inbox/{seg(uid)}/body", params={"mailbox": mailbox.strip().lower()}
         )
         if not response.ok:
             return response.error_json()
@@ -138,7 +138,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
             payload["in_reply_to"] = in_reply_to
         if references:
             payload["references"] = references
-        return client.post(f"/v1/email-users/{user_id}/inbox/send", json_body=payload).render()
+        return client.post(f"/v1/email-users/{seg(user_id)}/inbox/send", json_body=payload).render()
 
     @mcp.tool(annotations=WRITE)
     def winnr_refresh_inbox() -> str:
@@ -161,4 +161,4 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
         """
         if not mailbox or "@" not in mailbox:
             return tool_error("mailbox is required and must be the receiving email address")
-        return client.delete(f"/v1/inbox/{uid}", params={"mailbox": mailbox.strip().lower()}).render()
+        return client.delete(f"/v1/inbox/{seg(uid)}", params={"mailbox": mailbox.strip().lower()}).render()
