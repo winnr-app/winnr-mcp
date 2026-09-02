@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import quote
 
 from mcp.types import ToolAnnotations
 
@@ -41,3 +42,16 @@ def clean_domain(domain: str) -> str:
         if d.startswith(prefix):
             d = d[len(prefix):]
     return d.strip("/").rstrip(".")
+
+
+def seg(value: str) -> str:
+    """URL-encode one path segment so it can never change the route.
+
+    '/', '?', '#' are percent-encoded by quote(); dots are encoded too, so a
+    value of '.' or '..' cannot be collapsed as a dot-segment by the HTTP client.
+    """
+    return quote(str(value or "").strip(), safe="").replace(".", "%2E")
+
+
+def is_str(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())

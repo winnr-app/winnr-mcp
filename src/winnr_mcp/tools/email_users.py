@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
 from winnr_mcp.tools._common import (
+    is_str,
     DESTRUCTIVE,
     READ,
     WRITE,
@@ -14,9 +15,11 @@ from winnr_mcp.tools._common import (
     clamp,
     clean_domain,
     tool_error,
+    seg,
 )
 
 MAX_BULK_USERS = 100
+MIN_PASSWORD = 8
 
 
 def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -58,7 +61,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
         Args:
             user_id: The email user ID (from winnr_list_email_users)
         """
-        return client.get(f"/v1/email-users/{user_id}").render()
+        return client.get(f"/v1/email-users/{seg(user_id)}").render()
 
     # ── Write tools ─────────────────────────────────────────────────────
 
@@ -84,12 +87,14 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
 
         Args:
             username: Local part before the @ (e.g. "john.doe"), lowercase
-            domain: Domain name (e.g. "example.com") — must already be active
+            domain: Domain name (e.g. "example.com") — status must be "complete"
             name: Display name shown to recipients (e.g. "John Doe")
             password: Optional password (min 8 chars); auto-generated if omitted
         """
-        if not username or not username.strip():
-            return tool_error("username is required")
+        if not is_str(username) or not is_str(domain):
+            return tool_error("username and domain are required")
+        if password is not None and (not isinstance(password, str) or len(password) < MIN_PASSWORD):
+            return tool_error(f"password must be at least {MIN_PASSWORD} characters")
         body: dict = {
             "username": username.strip().lower(),
             "domain": clean_domain(domain),
@@ -119,10 +124,12 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
         if name is not None:
             body["name"] = name
         if password is not None:
+            if not isinstance(password, str) or len(password) < MIN_PASSWORD:
+                return tool_error(f"password must be at least {MIN_PASSWORD} characters")
             body["password"] = password
         if not body:
             return tool_error("At least one field (name or password) must be provided.")
-        return client.patch(f"/v1/email-users/{user_id}", json_body=body).render()
+        return client.patch(f"/v1/email-users/{seg(user_id)}", json_body=body).render()
 
     @mcp.tool(annotations=DESTRUCTIVE)
     def winnr_delete_email_user(user_id: str) -> str:
@@ -135,7 +142,7 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
         Args:
             user_id: The email user ID to delete
         """
-        return client.delete(f"/v1/email-users/{user_id}").render()
+        return client.delete(f"/v1/email-users/{seg(user_id)}").render()
 
     @mcp.tool(annotations=WRITE)
     def winnr_bulk_create_email_users(domain: str, users: list[dict]) -> str:
@@ -159,13 +166,19 @@ def register_email_user_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCo
             return tool_error(f"Maximum {MAX_BULK_USERS} users per call, got {len(users)}")
         cleaned = []
         for i, u in enumerate(users):
-            if not isinstance(u, dict) or not (u.get("username") or "").strip():
+            if not isinstance(u, dict) or not is_str(u.get("username")):
                 return tool_error(f"users[{i}] must be an object with a non-empty 'username'")
-            entry = {"username": u["username"].strip().lower(), "name": (u.get("name") or "").strip()}
-            if u.get("password"):
-                entry["password"] = u["password"]
-            if u.get("footer"):
+            name = u.get("name")
+            entry = {"username": u["username"].strip().lower(), "name": name.strip() if isinstance(name, str) else ""}
+            pw = u.get("password")
+            if pw is not None:
+                if not isinstance(pw, str) or len(pw) < MIN_PASSWORD:
+                    return tool_error(f"users[{i}].password must be at least {MIN_PASSWORD} characters")
+                entry["password"] = pw
+            if is_str(u.get("footer")):
                 entry["footer"] = u["footer"]
             cleaned.append(entry)
+        if not is_str(domain):
+            return tool_error("domain is required")
         body = {"domain": clean_domain(domain), "users": cleaned}
         return client.post("/v1/email-users/bulk", json_body=body).render()

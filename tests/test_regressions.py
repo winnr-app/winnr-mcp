@@ -172,27 +172,106 @@ def test_bulk_create_rejects_missing_username(config):
 
 # ── Domains ─────────────────────────────────────────────────────────────
 
+def _search_bulk(results):
+    return respx.post(f"{API}/v1/domains/search-bulk").mock(
+        return_value=ok({"results": results, "count": len(results)})
+    )
+
+
 @respx.mock
-def test_purchase_domains_is_async(config):
+def test_purchase_domains_is_async_and_reverifies_price(config):
+    search = _search_bulk([{"domain": "acmehq.com", "available": True, "price": 12}])
     route = respx.post(f"{API}/v1/domains/purchase").mock(
         return_value=httpx.Response(202, json={"data": {"job_id": "j9"}, "meta": {}})
     )
     mcp, _ = build(config)
-    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "AcmeHQ.com", "price": 12}])
+    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "AcmeHQ.com", "price": 12, "bogus": 1}])
     assert out["data"]["job_id"] == "j9"
+    assert search.called
     body = json.loads(route.calls[0].request.content)
     assert body["async"] is True
-    assert body["domains"][0]["domain"] == "acmehq.com"
-    assert body["domains"][0]["price"] == 12
+    assert body["domains"][0] == {"domain": "acmehq.com", "price": 12.0}
+
+
+@respx.mock
+def test_purchase_domains_refused_when_live_price_higher(config):
+    _search_bulk([{"domain": "acmehq.com", "available": True, "price": 25}])
+    purchase = respx.post(f"{API}/v1/domains/purchase")
+    mcp, _ = build(config)
+    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com", "price": 12}])
+    assert out["error"]["code"] == "price_changed" and "$25" in out["error"]["message"]
+    assert not purchase.called
+
+
+@respx.mock
+def test_purchase_domains_refused_when_taken(config):
+    _search_bulk([{"domain": "acmehq.com", "available": False, "price": None, "error": "taken"}])
+    purchase = respx.post(f"{API}/v1/domains/purchase")
+    mcp, _ = build(config)
+    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com", "price": 12}])
+    assert out["error"]["code"] == "price_changed"
+    assert not purchase.called
+
+
+@respx.mock
+def test_purchase_domains_fails_closed_when_price_check_fails(config):
+    respx.post(f"{API}/v1/domains/search-bulk").mock(return_value=httpx.Response(500, json={"error": {"code": "x", "message": "boom"}}))
+    purchase = respx.post(f"{API}/v1/domains/purchase")
+    mcp, _ = build(config)
+    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com", "price": 12}])
+    assert out["error"]["code"] == "price_check_failed"
+    assert not purchase.called
+
+
+@respx.mock
+def test_purchase_domains_without_price_skips_guard(config):
+    search = respx.post(f"{API}/v1/domains/search-bulk")
+    respx.post(f"{API}/v1/domains/purchase").mock(return_value=httpx.Response(202, json={"data": {"job_id": "j1"}}))
+    mcp, _ = build(config)
+    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": "acmehq.com"}])
+    assert out["data"]["job_id"] == "j1"
+    assert not search.called
+
+
+def test_purchase_domains_rejects_non_string_domain(config):
+    mcp, _ = build(config)
+    out = call(mcp, "winnr_purchase_domains", domains=[{"domain": 123}])
+    assert out["error"]["code"] == "invalid_arguments"
+    out = call(mcp, "winnr_bulk_create_email_users", domain="a.com", users=[{"username": 5}])
+    assert out["error"]["code"] == "invalid_arguments"
+    out = call(mcp, "winnr_bulk_create_email_users", domain="a.com", users=[{"username": "a", "password": "short"}])
+    assert "8 characters" in out["error"]["message"]
+
+
+def test_export_hidden_for_read_only(read_only_config):
+    mcp, _ = build(read_only_config)
+    names = [t.name for t in mcp._tool_manager.list_tools()]
+    assert "winnr_export_email_users" not in names and "winnr_list_export_formats" in names
+
+
+def test_check_dns_provider_caps_at_20(config):
+    mcp, _ = build(config)
+    out = call(mcp, "winnr_check_dns_provider", domains=[f"d{i}.com" for i in range(21)])
+    assert out["error"]["code"] == "invalid_arguments"
+
+
+@respx.mock
+def test_list_jobs_filters(config):
+    route = respx.get(f"{API}/v1/jobs").mock(return_value=ok([]))
+    mcp, _ = build(config)
+    call(mcp, "winnr_list_jobs", status="Completed", job_type="domain_setup")
+    p = route.calls[0].request.url.params
+    assert p["filter[status]"] == "completed" and p["filter[type]"] == "domain_setup" and "cursor" not in p
 
 
 @respx.mock
 def test_list_domains_status_filter(config):
     route = respx.get(f"{API}/v1/domains").mock(return_value=ok([]))
     mcp, _ = build(config)
-    call(mcp, "winnr_list_domains", status="active")
-    assert route.calls[0].request.url.params["filter[status]"] == "active"
+    call(mcp, "winnr_list_domains", status="complete")
+    assert route.calls[0].request.url.params["filter[status]"] == "complete"
     assert "error" in call(mcp, "winnr_list_domains", status="weird")
+    assert "error" in call(mcp, "winnr_list_domains", status="active")  # not a real domain status
 
 
 @respx.mock
@@ -332,3 +411,27 @@ def test_discover_permissions_tolerates_outage(config):
     respx.get(f"{API}/v1/account").mock(side_effect=httpx.ConnectError("down"))
     _discover_permissions(WinnrClient(config), config)  # must not raise
     assert config.permissions == ["read", "write"]
+
+
+# ── Path parameters are always URL-encoded ──────────────────────────────
+
+def test_no_raw_fstring_path_params():
+    """Every {param} inside an f"/v1/..." path must go through seg()."""
+    import re
+    from pathlib import Path
+    bad = []
+    for f in Path("src/winnr_mcp/tools").glob("*.py"):
+        for m in re.finditer(r'f"/v1/[^"]*"', f.read_text()):
+            for param in re.findall(r"\{([^}]+)\}", m.group(0)):
+                if not param.startswith("seg("):
+                    bad.append(f"{f.name}: {m.group(0)}")
+    assert not bad, bad
+
+
+@respx.mock
+def test_path_param_with_slash_cannot_change_route(config):
+    route = respx.get(url__regex=r".*/v1/inbox/.*").mock(return_value=ok({"uid": "x", "mailbox": "a@b.co", "body": ""}))
+    mcp, _ = build(config)
+    call(mcp, "winnr_get_message_body", uid="1/../refresh", mailbox="a@b.co")
+    sent = str(route.calls[0].request.url)
+    assert "/v1/inbox/1%2F%2E%2E%2Frefresh/body" in sent, sent

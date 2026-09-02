@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, WRITE_IDEMPOTENT, clamp, tool_error
+from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, WRITE_IDEMPOTENT, clamp, tool_error, seg
 
 WEBHOOK_EVENTS = (
     "message.relayed",
@@ -58,7 +58,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         params: dict = {"limit": clamp(limit, 1, 100)}
         if cursor:
             params["cursor"] = cursor
-        return client.get(f"/v1/webhooks/{webhook_id}/deliveries", params=params).render()
+        return client.get(f"/v1/webhooks/{seg(webhook_id)}/deliveries", params=params).render()
 
     # ── Write tools ─────────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
             body["status"] = s
         if not body:
             return tool_error("At least one field must be provided.")
-        return client.patch(f"/v1/webhooks/{webhook_id}", json_body=body).render()
+        return client.patch(f"/v1/webhooks/{seg(webhook_id)}", json_body=body).render()
 
     @mcp.tool(annotations=DESTRUCTIVE)
     def winnr_delete_webhook(webhook_id: str) -> str:
@@ -140,7 +140,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             webhook_id: The webhook ID
         """
-        return client.delete(f"/v1/webhooks/{webhook_id}").render()
+        return client.delete(f"/v1/webhooks/{seg(webhook_id)}").render()
 
     @mcp.tool(annotations=WRITE)
     def winnr_test_webhook(webhook_id: str) -> str:
@@ -149,7 +149,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             webhook_id: The webhook ID
         """
-        return client.post(f"/v1/webhooks/{webhook_id}/test").render()
+        return client.post(f"/v1/webhooks/{seg(webhook_id)}/test").render()
 
     @mcp.tool(annotations=READ)
     def winnr_get_webhook_secret(webhook_id: str) -> str:
@@ -161,7 +161,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             webhook_id: The webhook ID
         """
-        return client.get(f"/v1/webhooks/{webhook_id}/secret").render()
+        return client.get(f"/v1/webhooks/{seg(webhook_id)}/secret").render()
 
     @mcp.tool(annotations=WRITE)
     def winnr_rotate_webhook_secret(webhook_id: str) -> str:
@@ -170,4 +170,4 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             webhook_id: The webhook ID
         """
-        return client.post(f"/v1/webhooks/{webhook_id}/rotate-secret").render()
+        return client.post(f"/v1/webhooks/{seg(webhook_id)}/rotate-secret").render()

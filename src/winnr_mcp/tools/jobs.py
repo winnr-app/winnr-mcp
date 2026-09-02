@@ -6,27 +6,31 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import READ, clamp
+from winnr_mcp.tools._common import READ, clamp, is_str, seg, tool_error
 
 
 def register_job_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register job tracking MCP tools."""
 
     @mcp.tool(annotations=READ)
-    def winnr_list_jobs(limit: int = 25, cursor: str | None = None) -> str:
-        """List recent async jobs (domain setup, purchases, mailbox creation/deletion).
+    def winnr_list_jobs(limit: int = 25, status: str | None = None, job_type: str | None = None) -> str:
+        """List recent async jobs (domain setup, purchases, mailbox creation/deletion), newest first.
 
         Every write that provisions infrastructure returns a job_id; this shows the
         recent ones with their status. Also the place to look after a timeout on a
         purchase, to see whether the order actually went through before retrying.
+        Not paginated: raise `limit` to see further back.
 
         Args:
-            limit: Page size (1-100, default 25)
-            cursor: Pagination cursor from a previous response
+            limit: Max jobs to return (1-100, default 25)
+            status: Optional filter: queued, in_progress, completed, error
+            job_type: Optional filter by job type (e.g. domain_setup, domain_purchase, user_create)
         """
         params: dict = {"limit": clamp(limit, 1, 100)}
-        if cursor:
-            params["cursor"] = cursor
+        if is_str(status):
+            params["filter[status]"] = status.strip().lower()
+        if is_str(job_type):
+            params["filter[type]"] = job_type.strip()
         return client.get("/v1/jobs", params=params).render()
 
     @mcp.tool(annotations=READ)
@@ -42,7 +46,5 @@ def register_job_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -
             job_id: The job ID returned by the tool that started the work
         """
         if not job_id or not job_id.strip():
-            from winnr_mcp.tools._common import tool_error
-
             return tool_error("job_id is required")
-        return client.get(f"/v1/jobs/{job_id.strip()}").render()
+        return client.get(f"/v1/jobs/{seg(job_id)}").render()

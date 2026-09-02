@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
-from winnr_mcp.tools._common import PURCHASE, READ, WRITE_IDEMPOTENT, tool_error
+from winnr_mcp.tools._common import PURCHASE, READ, WRITE_IDEMPOTENT, tool_error, seg
 
 RAMPUP_SPEEDS = ("slow", "normal", "fast")
 MAX_EMAILS_PER_DAY = 20
@@ -42,7 +42,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             user_id: The email user ID
         """
-        return client.get(f"/v1/warming/{user_id}/metrics").render()
+        return client.get(f"/v1/warming/{seg(user_id)}/metrics").render()
 
     # ── Write tools ─────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             user_id: The email user ID
         """
-        return client.post(f"/v1/warming/{user_id}/pause").render()
+        return client.post(f"/v1/warming/{seg(user_id)}/pause").render()
 
     @mcp.tool(annotations=WRITE_IDEMPOTENT)
     def winnr_resume_warming(user_id: str) -> str:
@@ -111,7 +111,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         Args:
             user_id: The email user ID
         """
-        return client.post(f"/v1/warming/{user_id}/resume").render()
+        return client.post(f"/v1/warming/{seg(user_id)}/resume").render()
 
     @mcp.tool(annotations=WRITE_IDEMPOTENT)
     def winnr_update_warming_settings(
@@ -145,4 +145,4 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
             body["rampup_speed"] = speed
         if not body:
             return tool_error("Provide at least one of emails_per_day, rampup_enabled, rampup_speed.")
-        return client.patch(f"/v1/warming/{user_id}/settings", json_body=body).render()
+        return client.patch(f"/v1/warming/{seg(user_id)}/settings", json_body=body).render()
