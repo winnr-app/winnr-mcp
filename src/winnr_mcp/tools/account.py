@@ -6,31 +6,30 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
+from winnr_mcp.tools._common import READ
 
 
 def register_account_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register account-related MCP tools."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_get_account() -> str:
-        """Get your Winnr account details including plan, limits, and subscription status.
+        """Get the Winnr account this token belongs to: plan, limits and subscription status.
 
-        Returns account ID, name, email, current plan, domain limit, email user limit,
-        and creation date.
+        Returns account id, name, email, current plan, domain limit/used, email user
+        limit/used, domain credits, subscription status, and (under `api_token`)
+        the name and permissions of the API token in use. Call this first in a
+        session to learn the account's capacity before proposing changes.
         """
-        response = client.get("/v1/account")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/account").render()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_get_usage() -> str:
-        """Get current usage statistics for your Winnr account.
+        """Get current usage vs. plan limits (domains, email users, pre-warmed addresses).
 
-        Returns how many domains and email users you've used vs. your plan limits.
-        Useful for checking capacity before creating new resources.
+        Useful for checking capacity before creating resources. Pre-warmed addresses
+        are a separate pool billed at $3/address/month and do not count against the
+        email user limit. Domain slots are free and self-serve — never tell a user to
+        upgrade for more domains.
         """
-        response = client.get("/v1/account/usage")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/account/usage").render()

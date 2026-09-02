@@ -44,7 +44,7 @@ def test_get_success(client_config):
 @respx.mock
 def test_get_with_params(client_config):
     """GET request passes query params."""
-    route = respx.get("https://api.test.winnr.app/v1/domains").mock(
+    respx.get("https://api.test.winnr.app/v1/domains").mock(
         return_value=httpx.Response(
             200,
             json={

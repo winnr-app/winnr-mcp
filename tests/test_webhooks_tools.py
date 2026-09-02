@@ -156,7 +156,9 @@ def test_winnr_create_webhook_error(config):
     result = mcp._tool_manager._tools["winnr_create_webhook"].fn(
         url="https://example.com/hooks/winnr", events=["bogus.event"]
     )
-    assert "Invalid event type" in result
+    # Rejected locally before any request: the error names the bad event.
+    assert "bogus.event" in result
+    assert json.loads(result)["error"]["code"] == "invalid_arguments"
 
 
 @respx.mock
