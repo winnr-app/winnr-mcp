@@ -6,6 +6,28 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
+from winnr_mcp.tools._common import DESTRUCTIVE, READ, WRITE, WRITE_IDEMPOTENT, clamp, tool_error
+
+WEBHOOK_EVENTS = (
+    "message.relayed",
+    "email.received",
+    "email.bounced",
+    "email.complained",
+    "domain.created",
+    "domain.ready",
+    "domain.dns_failed",
+    "email_user.created",
+    "email_user.deleted",
+)
+
+
+def _validate_events(events: list[str]) -> str | None:
+    if not events:
+        return "events must contain at least one event type (or [\"*\"] for all)"
+    for e in events:
+        if e != "*" and e not in WEBHOOK_EVENTS:
+            return f"Unknown event '{e}'. Valid: {', '.join(WEBHOOK_EVENTS)} or \"*\""
+    return None
 
 
 def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -13,158 +35,139 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_list_webhooks() -> str:
-        """List all webhook endpoints configured on the account.
+        """List the account's outbound webhook endpoints.
 
-        Returns each webhook's ID, URL, subscribed events, description,
-        status (enabled/disabled), and delivery health.
+        Returns id, URL, subscribed events, description, status (enabled /
+        disabled / auto-disabled after repeated failures) and delivery health.
         """
-        response = client.get("/v1/webhooks")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/webhooks").render()
 
-    @mcp.tool()
-    def winnr_get_webhook_deliveries(webhook_id: str, limit: int = 25) -> str:
-        """List recent delivery attempts for a webhook endpoint.
+    @mcp.tool(annotations=READ)
+    def winnr_get_webhook_deliveries(webhook_id: str, limit: int = 25, cursor: str | None = None) -> str:
+        """Recent delivery attempts for one webhook (event, HTTP status, retries, time).
 
-        Returns each delivery's event type, HTTP status, success/failure,
-        retry count, and timestamp. Useful for debugging a webhook that
-        is not receiving events.
+        The first place to look when a customer says events are not arriving.
 
         Args:
             webhook_id: The webhook ID
-            limit: Max deliveries to return (default 25)
+            limit: Max deliveries to return (1-100, default 25)
+            cursor: Pagination cursor from a previous response
         """
-        response = client.get(f"/v1/webhooks/{webhook_id}/deliveries", params={"limit": limit})
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        params: dict = {"limit": clamp(limit, 1, 100)}
+        if cursor:
+            params["cursor"] = cursor
+        return client.get(f"/v1/webhooks/{webhook_id}/deliveries", params=params).render()
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    if "write" in config.permissions:
+    if not config.can_write:
+        return
 
-        @mcp.tool()
-        def winnr_create_webhook(url: str, events: list[str], description: str | None = None) -> str:
-            """Create a webhook endpoint that receives event notifications.
+    @mcp.tool(annotations=WRITE)
+    def winnr_create_webhook(url: str, events: list[str], description: str | None = None) -> str:
+        """Create a webhook endpoint that receives signed event notifications.
 
-            The response includes the signing secret used to verify webhook
-            payloads — store it securely; it is only shown in full here and
-            via winnr_get_webhook_secret.
+        The response includes the signing secret — it is shown here and via
+        winnr_get_webhook_secret only. Payloads are HMAC-signed; failed deliveries
+        retry with backoff and the endpoint auto-disables after sustained failure.
 
-            Valid events: message.relayed, email.received, email.bounced,
-            email.complained, domain.created, domain.ready, domain.dns_failed,
-            email_user.created, email_user.deleted — or ["*"] to subscribe
-            to all events.
+        Events: message.relayed, email.received, email.bounced, email.complained,
+        domain.created, domain.ready, domain.dns_failed, email_user.created,
+        email_user.deleted — or ["*"] for all.
 
-            Args:
-                url: The HTTPS URL to deliver events to
-                events: List of event types to subscribe to (or ["*"] for all)
-                description: Optional human-readable description
-            """
-            body: dict = {"url": url, "events": events}
-            if description is not None:
-                body["description"] = description
-            response = client.post("/v1/webhooks", json_body=body)
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            url: HTTPS URL to deliver events to
+            events: Event types to subscribe to (or ["*"])
+            description: Optional human-readable description
+        """
+        if not url or not url.lower().startswith("https://"):
+            return tool_error("url must be an https:// URL")
+        err = _validate_events(events)
+        if err:
+            return tool_error(err)
+        body: dict = {"url": url.strip(), "events": events}
+        if description is not None:
+            body["description"] = description
+        return client.post("/v1/webhooks", json_body=body).render()
 
-        @mcp.tool()
-        def winnr_update_webhook(
-            webhook_id: str,
-            url: str | None = None,
-            events: list[str] | None = None,
-            description: str | None = None,
-            status: str | None = None,
-        ) -> str:
-            """Update a webhook endpoint's URL, events, description, or status.
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    def winnr_update_webhook(
+        webhook_id: str,
+        url: str | None = None,
+        events: list[str] | None = None,
+        description: str | None = None,
+        status: str | None = None,
+    ) -> str:
+        """Update a webhook's URL, events, description, or enabled/disabled status.
 
-            Setting status to "enabled" re-enables a webhook and clears any
-            auto-disable applied after repeated delivery failures.
+        status="enabled" also clears an auto-disable applied after repeated
+        delivery failures.
 
-            Args:
-                webhook_id: The webhook ID
-                url: New delivery URL
-                events: New list of subscribed event types (replaces existing)
-                description: New description
-                status: "enabled" or "disabled"
-            """
-            body: dict = {}
-            if url is not None:
-                body["url"] = url
-            if events is not None:
-                body["events"] = events
-            if description is not None:
-                body["description"] = description
-            if status is not None:
-                body["status"] = status
-            if not body:
-                return "Error: At least one field must be provided."
-            response = client.patch(f"/v1/webhooks/{webhook_id}", json_body=body)
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            webhook_id: The webhook ID
+            url: New HTTPS delivery URL
+            events: New list of event types (replaces the existing list)
+            description: New description
+            status: "enabled" or "disabled"
+        """
+        body: dict = {}
+        if url is not None:
+            if not url.lower().startswith("https://"):
+                return tool_error("url must be an https:// URL")
+            body["url"] = url.strip()
+        if events is not None:
+            err = _validate_events(events)
+            if err:
+                return tool_error(err)
+            body["events"] = events
+        if description is not None:
+            body["description"] = description
+        if status is not None:
+            s = status.strip().lower()
+            if s not in ("enabled", "disabled"):
+                return tool_error('status must be "enabled" or "disabled"')
+            body["status"] = s
+        if not body:
+            return tool_error("At least one field must be provided.")
+        return client.patch(f"/v1/webhooks/{webhook_id}", json_body=body).render()
 
-        @mcp.tool()
-        def winnr_delete_webhook(webhook_id: str) -> str:
-            """Delete a webhook endpoint.
+    @mcp.tool(annotations=DESTRUCTIVE)
+    def winnr_delete_webhook(webhook_id: str) -> str:
+        """Delete a webhook endpoint and stop all deliveries to it. Cannot be undone.
 
-            Stops all event deliveries to the endpoint. This cannot be undone.
+        Args:
+            webhook_id: The webhook ID
+        """
+        return client.delete(f"/v1/webhooks/{webhook_id}").render()
 
-            Args:
-                webhook_id: The webhook ID
-            """
-            response = client.delete(f"/v1/webhooks/{webhook_id}")
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+    @mcp.tool(annotations=WRITE)
+    def winnr_test_webhook(webhook_id: str) -> str:
+        """Send a signed test.ping event to a webhook so the customer can verify their receiver.
 
-        @mcp.tool()
-        def winnr_test_webhook(webhook_id: str) -> str:
-            """Send a test.ping event to a webhook endpoint.
+        Args:
+            webhook_id: The webhook ID
+        """
+        return client.post(f"/v1/webhooks/{webhook_id}/test").render()
 
-            Delivers a signed test payload so you can verify the endpoint
-            receives and validates events correctly.
+    @mcp.tool(annotations=READ)
+    def winnr_get_webhook_secret(webhook_id: str) -> str:
+        """Retrieve a webhook's signing secret. SENSITIVE — treat like a password.
 
-            Args:
-                webhook_id: The webhook ID
-            """
-            response = client.post(f"/v1/webhooks/{webhook_id}/test")
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Only shown when the user needs it to configure their receiver; do not
+        repeat it back unprompted or store it anywhere.
 
-        @mcp.tool()
-        def winnr_get_webhook_secret(webhook_id: str) -> str:
-            """Retrieve a webhook's signing secret.
+        Args:
+            webhook_id: The webhook ID
+        """
+        return client.get(f"/v1/webhooks/{webhook_id}/secret").render()
 
-            WARNING: this returns a sensitive signing secret (a credential).
-            Anyone holding it can forge valid-looking webhook payloads.
-            Handle it like a password — do not log or share it.
+    @mcp.tool(annotations=WRITE)
+    def winnr_rotate_webhook_secret(webhook_id: str) -> str:
+        """Rotate a webhook's signing secret. The old one stays valid for 24 hours.
 
-            Args:
-                webhook_id: The webhook ID
-            """
-            response = client.get(f"/v1/webhooks/{webhook_id}/secret")
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
-
-        @mcp.tool()
-        def winnr_rotate_webhook_secret(webhook_id: str) -> str:
-            """Rotate a webhook's signing secret.
-
-            Generates a new signing secret. The old secret remains valid for
-            24 hours so you can roll over signature verification without
-            dropping events.
-
-            Args:
-                webhook_id: The webhook ID
-            """
-            response = client.post(f"/v1/webhooks/{webhook_id}/rotate-secret")
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            webhook_id: The webhook ID
+        """
+        return client.post(f"/v1/webhooks/{webhook_id}/rotate-secret").render()

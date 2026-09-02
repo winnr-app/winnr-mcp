@@ -6,6 +6,10 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
+from winnr_mcp.tools._common import PURCHASE, READ, WRITE_IDEMPOTENT, tool_error
+
+RAMPUP_SPEEDS = ("slow", "normal", "fast")
+MAX_EMAILS_PER_DAY = 20
 
 
 def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -13,131 +17,132 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_list_warming() -> str:
-        """List all warming-enabled mailboxes with their current stats.
+        """List every warming-enabled mailbox with its current stats.
 
-        Returns mailbox address, warming status (active/paused), health score,
-        inbox rate, spam rate, daily volume, and warm-up progress.
+        Returns address, status (active/paused), health score, inbox rate, spam
+        rate, daily volume and ramp-up progress per mailbox.
         """
-        response = client.get("/v1/warming")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/warming").render()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_get_warming_overview() -> str:
-        """Get aggregate warming statistics across all mailboxes.
+        """Aggregate warming stats for the account.
 
-        Returns total active/paused counts, average health score, average
-        inbox rate, total daily volume, and estimated monthly warming cost.
+        Returns active/paused counts, average health score and inbox rate, total
+        daily volume, and the estimated monthly warming cost ($0.60/mailbox).
         """
-        response = client.get("/v1/warming/overview")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/warming/overview").render()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_get_warming_metrics(user_id: str) -> str:
-        """Get daily warming metrics for a specific mailbox.
-
-        Returns time-series data: emails sent, inbox rate, spam rate,
-        health score per day.
+        """Daily warming time-series for one mailbox (sent, inbox rate, spam rate, health).
 
         Args:
             user_id: The email user ID
         """
-        response = client.get(f"/v1/warming/{user_id}/metrics")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get(f"/v1/warming/{user_id}/metrics").render()
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    if "write" in config.permissions:
+    if not config.can_write:
+        return
 
-        @mcp.tool()
-        def winnr_enable_warming(user_ids: list[str]) -> str:
-            """Enable email warming for one or more mailboxes.
+    @mcp.tool(annotations=PURCHASE)
+    def winnr_enable_warming(
+        user_ids: list[str],
+        emails_per_day: int = 20,
+        rampup_speed: str = "normal",
+    ) -> str:
+        """Enable warming on one or more mailboxes. BILLS $0.60 per mailbox per month.
 
-            Warming gradually increases sending volume to build sender
-            reputation. Charges $0.60/mailbox/month.
+        Warming exchanges mail with a network of real inboxes to build sender
+        reputation. New mailboxes should warm for 2-3 weeks before any cold
+        sending. The charge is added to the account's subscription immediately, so
+        confirm the mailbox list and price with the user first. Re-enabling a
+        mailbox that is already warming is a no-op and is not billed twice.
 
-            Args:
-                user_ids: List of email user IDs to enable warming for
-            """
-            response = client.post("/v1/warming/enable", json_body={"user_ids": user_ids})
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            user_ids: Email user IDs to enable warming for
+            emails_per_day: Target warming volume, 1-20 (default 20)
+            rampup_speed: "slow", "normal" or "fast" (default "normal")
+        """
+        if not user_ids:
+            return tool_error("user_ids must contain at least one email user ID")
+        if not 1 <= int(emails_per_day) <= MAX_EMAILS_PER_DAY:
+            return tool_error(f"emails_per_day must be 1-{MAX_EMAILS_PER_DAY}")
+        speed = (rampup_speed or "normal").strip().lower()
+        if speed not in RAMPUP_SPEEDS:
+            return tool_error(f"rampup_speed must be one of {', '.join(RAMPUP_SPEEDS)}")
+        body = {
+            "user_ids": user_ids,
+            "settings": {"emails_per_day": int(emails_per_day), "rampup_speed": speed},
+        }
+        return client.post("/v1/warming/enable", json_body=body).render()
 
-        @mcp.tool()
-        def winnr_disable_warming(user_ids: list[str]) -> str:
-            """Disable email warming for one or more mailboxes.
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    def winnr_disable_warming(user_ids: list[str]) -> str:
+        """Turn warming off for one or more mailboxes and stop their $0.60/month charge.
 
-            Stops warming activity and billing for the specified mailboxes.
+        The reputation built so far is kept, but it decays if the mailbox goes idle.
+        Prefer winnr_pause_warming for a temporary stop.
 
-            Args:
-                user_ids: List of email user IDs to disable warming for
-            """
-            response = client.post("/v1/warming/disable", json_body={"user_ids": user_ids})
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            user_ids: Email user IDs to disable warming for
+        """
+        if not user_ids:
+            return tool_error("user_ids must contain at least one email user ID")
+        return client.post("/v1/warming/disable", json_body={"user_ids": user_ids}).render()
 
-        @mcp.tool()
-        def winnr_pause_warming(user_id: str) -> str:
-            """Pause warming for a specific mailbox.
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    def winnr_pause_warming(user_id: str) -> str:
+        """Pause warming on one mailbox without disabling it (billing continues).
 
-            Pausing temporarily stops warming activity without disabling it.
-            Resume with winnr_resume_warming.
+        Args:
+            user_id: The email user ID
+        """
+        return client.post(f"/v1/warming/{user_id}/pause").render()
 
-            Args:
-                user_id: The email user ID
-            """
-            response = client.post(f"/v1/warming/{user_id}/pause")
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    def winnr_resume_warming(user_id: str) -> str:
+        """Resume warming on a paused mailbox.
 
-        @mcp.tool()
-        def winnr_resume_warming(user_id: str) -> str:
-            """Resume warming for a paused mailbox.
+        Args:
+            user_id: The email user ID
+        """
+        return client.post(f"/v1/warming/{user_id}/resume").render()
 
-            Args:
-                user_id: The email user ID
-            """
-            response = client.post(f"/v1/warming/{user_id}/resume")
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+    @mcp.tool(annotations=WRITE_IDEMPOTENT)
+    def winnr_update_warming_settings(
+        user_id: str,
+        emails_per_day: int | None = None,
+        rampup_enabled: bool | None = None,
+        rampup_speed: str | None = None,
+    ) -> str:
+        """Change warming volume or ramp-up for a mailbox that is already warming.
 
-        @mcp.tool()
-        def winnr_update_warming_settings(
-            user_id: str,
-            daily_limit: int | None = None,
-            ramp_up: bool | None = None,
-            reply_rate: int | None = None,
-        ) -> str:
-            """Update warming settings for a mailbox.
+        The reply rate is fixed server-side (30%) and cannot be changed.
 
-            Args:
-                user_id: The email user ID
-                daily_limit: Max warming emails per day
-                ramp_up: Whether to gradually increase volume (true) or
-                    send at daily_limit immediately (false)
-                reply_rate: Target reply rate percentage (0-100)
-            """
-            body: dict = {}
-            if daily_limit is not None:
-                body["daily_limit"] = daily_limit
-            if ramp_up is not None:
-                body["ramp_up"] = ramp_up
-            if reply_rate is not None:
-                body["reply_rate"] = reply_rate
-            if not body:
-                return "Error: At least one setting must be provided."
-            response = client.patch(f"/v1/warming/{user_id}/settings", json_body=body)
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            user_id: The email user ID
+            emails_per_day: Warming emails per day, 1-20
+            rampup_enabled: true to ramp volume up gradually, false to send at
+                emails_per_day right away
+            rampup_speed: "slow", "normal" or "fast" (implies rampup_enabled=true)
+        """
+        body: dict = {}
+        if emails_per_day is not None:
+            if not 1 <= int(emails_per_day) <= MAX_EMAILS_PER_DAY:
+                return tool_error(f"emails_per_day must be 1-{MAX_EMAILS_PER_DAY}")
+            body["emails_per_day"] = int(emails_per_day)
+        if rampup_enabled is not None:
+            body["rampup_enabled"] = bool(rampup_enabled)
+        if rampup_speed is not None:
+            speed = rampup_speed.strip().lower()
+            if speed not in RAMPUP_SPEEDS:
+                return tool_error(f"rampup_speed must be one of {', '.join(RAMPUP_SPEEDS)}")
+            body["rampup_speed"] = speed
+        if not body:
+            return tool_error("Provide at least one of emails_per_day, rampup_enabled, rampup_speed.")
+        return client.patch(f"/v1/warming/{user_id}/settings", json_body=body).render()

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 DEFAULT_API_URL = "https://api.winnr.app"
 DEFAULT_TIMEOUT = 30
+TOKEN_HELP_URL = "https://app.winnr.app/mcp"
 
 
 @dataclass
@@ -19,38 +20,80 @@ class WinnrConfig:
     api_token: str
     api_url: str = DEFAULT_API_URL
     timeout: int = DEFAULT_TIMEOUT
-    # Populated after initial /v1/account call:
+    # ["read"] or ["read", "write"]. Starts from the --read-only flag and is
+    # narrowed further at startup if the API reports the token itself is read-only.
     permissions: list[str] = field(default_factory=lambda: ["read", "write"])
+    # Populated after initial /v1/account call:
     account_id: str | None = None
+    account_name: str | None = None
     plan: str | None = None
+    token_name: str | None = None
+
+    @property
+    def can_write(self) -> bool:
+        return "write" in self.permissions
 
 
-def load_config() -> WinnrConfig:
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("true", "1", "yes", "on")
+
+
+def load_config(argv: list[str] | None = None) -> WinnrConfig:
     """Load configuration from CLI args and environment variables.
 
     Priority: CLI args > env vars > defaults.
     """
-    parser = argparse.ArgumentParser(description="Winnr MCP Server")
-    parser.add_argument("--token", help="Winnr API token (wnr_*)")
+    parser = argparse.ArgumentParser(
+        prog="winnr-mcp",
+        description="Winnr MCP server — manage cold-email infrastructure from any MCP client.",
+    )
+    parser.add_argument("--token", help="Winnr API token (wnr_*). Overrides WINNR_API_TOKEN.")
     parser.add_argument("--api-url", help=f"API base URL (default: {DEFAULT_API_URL})")
-    parser.add_argument("--timeout", type=int, help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT})")
-    parser.add_argument("--read-only", action="store_true", help="Only register read tools (hides all write tools)")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--timeout", type=int, help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT})"
+    )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Only register read tools (hides every tool that can change or buy anything)",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {_package_version()}"
+    )
+    args = parser.parse_args(argv)
 
-    api_token = args.token or os.environ.get("WINNR_API_TOKEN")
+    api_token = (args.token or os.environ.get("WINNR_API_TOKEN") or "").strip()
     if not api_token:
-        print("Error: WINNR_API_TOKEN environment variable or --token argument is required.", file=sys.stderr)
-        print("\nGet your API token at https://app.winnr.app → Settings → API Tokens", file=sys.stderr)
+        print(
+            "Error: WINNR_API_TOKEN environment variable or --token argument is required.",
+            file=sys.stderr,
+        )
+        print(f"\nCreate a token and copy a ready-made config at {TOKEN_HELP_URL}", file=sys.stderr)
         sys.exit(1)
 
     if not api_token.startswith("wnr_"):
         print("Error: Invalid token format. Winnr API tokens start with 'wnr_'.", file=sys.stderr)
+        print(f"Create one at {TOKEN_HELP_URL}", file=sys.stderr)
         sys.exit(1)
 
-    api_url = args.api_url or os.environ.get("WINNR_API_URL", DEFAULT_API_URL)
-    timeout = args.timeout or int(os.environ.get("WINNR_TIMEOUT", str(DEFAULT_TIMEOUT)))
-    read_only = args.read_only or os.environ.get("WINNR_READ_ONLY", "").lower() in ("true", "1", "yes")
+    api_url = args.api_url or os.environ.get("WINNR_API_URL") or DEFAULT_API_URL
+    if not api_url.startswith(("http://", "https://")):
+        print(f"Error: WINNR_API_URL must start with http:// or https:// (got {api_url!r}).", file=sys.stderr)
+        sys.exit(1)
 
+    timeout = args.timeout
+    if timeout is None:
+        raw_timeout = os.environ.get("WINNR_TIMEOUT", "").strip()
+        try:
+            timeout = int(raw_timeout) if raw_timeout else DEFAULT_TIMEOUT
+        except ValueError:
+            print(f"Error: WINNR_TIMEOUT must be an integer number of seconds (got {raw_timeout!r}).", file=sys.stderr)
+            sys.exit(1)
+    if timeout <= 0:
+        print("Error: timeout must be a positive number of seconds.", file=sys.stderr)
+        sys.exit(1)
+
+    read_only = args.read_only or _env_flag("WINNR_READ_ONLY")
     permissions = ["read"] if read_only else ["read", "write"]
 
     return WinnrConfig(
@@ -59,3 +102,9 @@ def load_config() -> WinnrConfig:
         timeout=timeout,
         permissions=permissions,
     )
+
+
+def _package_version() -> str:
+    from winnr_mcp import __version__
+
+    return __version__

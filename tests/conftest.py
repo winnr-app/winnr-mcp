@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
-from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
-from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
 
 

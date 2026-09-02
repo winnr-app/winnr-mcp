@@ -6,7 +6,6 @@ import json
 
 import httpx
 import respx
-import pytest
 
 from mcp.server.fastmcp import FastMCP
 
@@ -111,7 +110,7 @@ def test_warming_write_tools_hidden_read_only(read_only_config):
 # ── Tool count tests ────────────────────────────────────────────────────
 
 def test_all_tools_registered(config):
-    """All 53 tools are registered with full permissions."""
+    """All 54 tools are registered with full permissions."""
     mcp, client = make_mcp_and_client(config)
     register_account_tools(mcp, client, config)
     register_domain_tools(mcp, client, config)
@@ -124,7 +123,7 @@ def test_all_tools_registered(config):
     register_webhook_tools(mcp, client, config)
     tools = mcp._tool_manager.list_tools()
     tool_names = [t.name for t in tools]
-    assert len(tool_names) == 53, f"Expected 53 tools, got {len(tool_names)}: {sorted(tool_names)}"
+    assert len(tool_names) == 54, f"Expected 54 tools, got {len(tool_names)}: {sorted(tool_names)}"
 
 
 def test_read_only_tool_count(read_only_config):
@@ -142,8 +141,8 @@ def test_read_only_tool_count(read_only_config):
     tools = mcp._tool_manager.list_tools()
     tool_names = [t.name for t in tools]
     # Read-only: account(2) + domains(7 read) + email_users(2 read) + inbox(2 read)
-    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(1) + webhooks(2 read) = 25
-    assert len(tool_names) == 25, f"Expected 25 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
+    #            + warming(3 read) + prewarmed(4 read) + jobs(2) + export(2) + webhooks(2 read) = 26
+    assert len(tool_names) == 26, f"Expected 26 read-only tools, got {len(tool_names)}: {sorted(tool_names)}"
 
 
 # ── Tool naming convention tests ────────────────────────────────────────
@@ -294,9 +293,11 @@ def test_winnr_export_email_users(config):
     )
     mcp, client = make_mcp_and_client(config)
     register_export_tools(mcp, client, config)
-    result = mcp._tool_manager._tools["winnr_export_email_users"].fn(format="smartlead")
+    result = mcp._tool_manager._tools["winnr_export_email_users"].fn(format="smartlead", all_domains=True)
     data = json.loads(result)
     assert "download_url" in data["data"]
+    body = json.loads(route.calls[0].request.content)
+    assert body == {"format": "smartlead", "getAllDomains": True}
 
 
 # ── winnr_tag_domains ───────────────────────────────────────────────────
@@ -470,7 +471,7 @@ def test_winnr_check_prewarmed_blocklist_rejects_unknown_list(config):
     result = mcp._tool_manager._tools["winnr_check_prewarmed_blocklist"].fn(
         domain="example.com", blocklist="not_a_list"
     )
-    assert "unknown blocklist" in result
+    assert "Unknown blocklist" in result
 
 
 @respx.mock

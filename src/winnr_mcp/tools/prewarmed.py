@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from winnr_mcp.client import WinnrClient
 from winnr_mcp.config import WinnrConfig
+from winnr_mcp.tools._common import DESTRUCTIVE, PURCHASE, READ, clamp, clean_domain, tool_error
 
 BLOCKLISTS = (
     "spamhaus_dbl",
@@ -18,6 +19,12 @@ BLOCKLISTS = (
     "sorbs_badconf",
     "sorbs_nomail",
 )
+SORT_OPTIONS = ("health", "warming_days", "name")
+MIN_ADDRESSES = 3
+MAX_ADDRESSES = 50
+MAX_CUSTOM_USERNAMES = 10
+MAX_BATCH = 25
+PURCHASE_TIMEOUT_SECONDS = 60
 
 
 def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
@@ -25,7 +32,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_browse_prewarmed(
         search: str | None = None,
         sort_by: str = "health",
@@ -33,66 +40,61 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
         page: int = 1,
         per_page: int = 50,
     ) -> str:
-        """Browse pre-warmed domains available to buy.
+        """Browse pre-warmed domains available to buy right now.
 
-        Pre-warmed domains are aged domains with mailboxes that have already
-        been warming, so they can send immediately instead of waiting weeks.
+        Pre-warmed domains are aged domains whose mailboxes have been warming for
+        weeks, so they can send immediately instead of waiting 2-3 weeks. Returns
+        name, average health score, warming days, domain age, address count and
+        blocklist status per listing. $3 per address per month, domain included,
+        no minimum term, no base plan required.
 
-        Returns domain name, average health score, warming days, domain age,
-        address count, and blocklist status for each listing.
-
-        Inventory is finite and shared across all customers — a domain listed
-        here can be bought by someone else at any moment. Re-check availability
-        right before purchasing, and move to the next candidate if a purchase
-        comes back with a conflict.
+        Inventory is shared across all customers and can sell at any moment.
+        Re-check right before buying and treat a conflict on purchase as "already
+        sold" — move to the next candidate, do not retry the same domain.
 
         Args:
             search: Filter to domains whose name contains this text
-            sort_by: One of "health", "warming_days", "name" (default "health")
+            sort_by: "health" (default), "warming_days" or "name"
             include_all: Also include aged domains that are not warming yet
             page: Page number (default 1)
             per_page: Results per page (1-1000, default 50)
         """
-        if sort_by not in ("health", "warming_days", "name"):
-            return 'Error: sort_by must be one of "health", "warming_days", "name".'
+        sort = (sort_by or "health").strip().lower()
+        if sort not in SORT_OPTIONS:
+            return tool_error(f"sort_by must be one of {', '.join(SORT_OPTIONS)}")
         params: dict = {
-            "sort_by": sort_by,
-            "page": max(page, 1),
-            "per_page": min(max(per_page, 1), 1000),
+            "sort_by": sort,
+            "page": max(int(page), 1),
+            "per_page": clamp(per_page, 1, 1000),
         }
         if search:
-            params["search"] = search
+            params["search"] = search.strip()
         if include_all:
             params["include_all"] = "true"
-        response = client.get("/v1/prewarmed/browse", params=params)
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/prewarmed/browse", params=params).render()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_get_prewarmed_domain(domain: str) -> str:
-        """Get full detail for one available pre-warmed domain.
+        """Full detail for one available pre-warmed domain.
 
-        Returns the individual warmed addresses with per-address health scores,
-        blocklist state, registration/expiration dates, and pricing terms.
-
-        Returns a not-found error once the domain has been sold or retired.
+        Returns each warmed address with its own health score, blocklist state,
+        registration/expiry dates and pricing. Not-found once sold or retired.
 
         Args:
             domain: The pre-warmed domain name (e.g. "example.com")
         """
-        response = client.get(f"/v1/prewarmed/{domain}")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        d = clean_domain(domain)
+        if not d:
+            return tool_error("domain is required")
+        return client.get(f"/v1/prewarmed/{d}").render()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_check_prewarmed_blocklist(domain: str, blocklist: str | None = None) -> str:
-        """Run a live blocklist check on a pre-warmed domain.
+        """Live blocklist check on a pre-warmed domain (all nine lists by default).
 
-        Useful for re-verifying a domain immediately before buying it. Checks
-        all nine blocklists by default. Results are cached for 5 minutes; a
-        cached result comes back with "cached": true.
+        Use right before buying. Results are cached for 5 minutes ("cached": true).
+        Only SURBL and Spamhaus DBL materially affect deliverability; the rest are
+        informational.
 
         Args:
             domain: The pre-warmed domain name
@@ -100,143 +102,143 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
                 spamhaus_dbl, surbl, ivmuri, nordspam_dbl, sem_fresh,
                 sem_uri, sem_urired, sorbs_badconf, sorbs_nomail
         """
-        path = f"/v1/prewarmed/{domain}/blocklist-check"
+        d = clean_domain(domain)
+        if not d:
+            return tool_error("domain is required")
+        params: dict | None = None
         if blocklist:
-            if blocklist not in BLOCKLISTS:
-                return f"Error: unknown blocklist '{blocklist}'. Valid: {', '.join(BLOCKLISTS)}"
-            # The API reads `list` from the query string, and client.post() takes
-            # no params, so it goes on the path.
-            path = f"{path}?list={blocklist}"
-        response = client.post(path)
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+            bl = blocklist.strip().lower()
+            if bl not in BLOCKLISTS:
+                return tool_error(f"Unknown blocklist '{blocklist}'. Valid: {', '.join(BLOCKLISTS)}")
+            params = {"list": bl}
+        return client.post(f"/v1/prewarmed/{d}/blocklist-check", params=params).render()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def winnr_list_my_prewarmed() -> str:
-        """List the pre-warmed domains this account has purchased.
+        """List the pre-warmed domains this account has bought, with purchase dates.
 
-        Returns each domain with its purchase date. (The 90-day minimum term
-        was removed in August 2026; pre-warmed domains can be cancelled at any
-        time, and minimum_term_end is null on newer purchases.)
-
-        Mailbox credentials are not returned here — use winnr_list_email_users
-        filtered to the domain to get addresses and passwords.
+        Credentials are not included — use winnr_list_email_users filtered to the
+        domain for addresses, and winnr_export_email_users for passwords.
         """
-        response = client.get("/v1/prewarmed/my-domains")
-        if not response.ok:
-            return response.error_message or "Unknown error"
-        return response.to_json()
+        return client.get("/v1/prewarmed/my-domains").render()
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    if "write" in config.permissions:
+    if not config.can_write:
+        return
 
-        @mcp.tool()
-        def winnr_purchase_prewarmed(
-            domain: str,
-            address_count: int,
-            custom_usernames: list[str] | None = None,
-        ) -> str:
-            """Buy pre-warmed addresses on ONE domain. CHARGES THE ACCOUNT'S
-            STRIPE CARD ON FILE.
+    @mcp.tool(annotations=PURCHASE)
+    def winnr_purchase_prewarmed(
+        domain: str,
+        address_count: int = MIN_ADDRESSES,
+        custom_usernames: list[str] | None = None,
+    ) -> str:
+        """Buy pre-warmed addresses on ONE domain. CHARGES THE ACCOUNT'S CARD ON FILE.
 
-            Billed at $3 per address per month with no minimum term; the
-            domain itself is included. The first month is charged immediately.
-            Fail-closed — if the charge fails nothing is provisioned and the
-            account is not billed. Idempotent per domain: re-running a
-            successful purchase returns already_provisioned instead of charging
-            again.
+        $3 per address per month, domain included, no minimum term. The first
+        month is charged immediately; if the charge fails nothing is provisioned.
+        Idempotent per domain: re-running a successful purchase returns
+        already_provisioned instead of charging again. Confirm domain, address
+        count and monthly total with the user before calling.
 
-            Two modes:
-            - Keep (default): you receive the domain's existing warmed
-              mailboxes, credentials unchanged, usable as soon as this returns.
-            - Custom (custom_usernames given): the warmed sample addresses are
-              dropped and new mailboxes with your local-parts are provisioned
-              on the same aged domain. Provisioning is asynchronous — the
-              response returns provisioning "async" and the mailboxes appear on
-              winnr_list_email_users a few minutes later. New mailboxes are not
-              individually warmed but inherit the domain's reputation.
+        Two modes:
+        - Keep (default): you get the domain's existing warmed mailboxes,
+          credentials unchanged, usable as soon as this returns.
+        - Custom (custom_usernames given): the warmed sample mailboxes are
+          replaced by new ones with your local-parts on the same aged domain.
+          Provisioning is asynchronous; the mailboxes appear in
+          winnr_list_email_users a few minutes later. They inherit the domain's
+          reputation but are not individually warmed.
 
-            Warming is stopped at sale either way; addresses arrive ready to
-            send. Pre-warmed addresses are a fully separate pool: they do not
-            count against the email user limit OR the domain limit, and NO
-            base plan subscription is required — billing runs on its own
-            standalone $3/addr subscription that survives plan cancellation.
-            Only a saved payment method is needed (a 402
-            payment_method_required error means add a card in the dashboard
-            first).
+        Warming stops at sale either way — addresses arrive ready to send.
+        Pre-warmed addresses are a separate pool: no base plan is needed, they do
+        not count against email user or domain limits, and they bill on their own
+        subscription. A 402 payment_method_required error means the account has
+        no card — the user adds one in the dashboard first.
 
-            To buy several domains, use winnr_purchase_prewarmed_batch instead
-            so the whole order is one charge.
+        For several domains use winnr_purchase_prewarmed_batch (one charge).
 
-            Args:
-                domain: The pre-warmed domain to buy
-                address_count: How many existing warmed addresses to take
-                    (minimum 3, maximum 50). Ignored when custom_usernames is
-                    given — the count comes from that list.
-                custom_usernames: Optional. 3-10 unique local-parts (the part
-                    before the @) to provision as new mailboxes instead.
-            """
-            body: dict = {"domain": domain, "address_count": address_count}
-            if custom_usernames:
-                body["custom_usernames"] = custom_usernames
-            response = client.post("/v1/prewarmed/purchase", json_body=body)
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            domain: The pre-warmed domain to buy
+            address_count: Warmed addresses to take (3-50, default 3). Ignored when
+                custom_usernames is given.
+            custom_usernames: Optional 3-10 unique local-parts to provision as new
+                mailboxes instead of keeping the warmed ones.
+        """
+        d = clean_domain(domain)
+        if not d:
+            return tool_error("domain is required")
+        body: dict = {"domain": d}
+        if custom_usernames:
+            names = [u.strip().lower() for u in custom_usernames if u and u.strip()]
+            if not MIN_ADDRESSES <= len(names) <= MAX_CUSTOM_USERNAMES:
+                return tool_error(f"custom_usernames must contain {MIN_ADDRESSES}-{MAX_CUSTOM_USERNAMES} names")
+            if len(set(names)) != len(names):
+                return tool_error("custom_usernames must be unique")
+            body["custom_usernames"] = names
+            body["address_count"] = len(names)
+        else:
+            if not MIN_ADDRESSES <= int(address_count) <= MAX_ADDRESSES:
+                return tool_error(f"address_count must be {MIN_ADDRESSES}-{MAX_ADDRESSES}")
+            body["address_count"] = int(address_count)
+        return client.post(
+            "/v1/prewarmed/purchase", json_body=body, timeout=PURCHASE_TIMEOUT_SECONDS
+        ).render()
 
-        @mcp.tool()
-        def winnr_purchase_prewarmed_batch(items: list[dict]) -> str:
-            """Buy pre-warmed addresses across SEVERAL domains as one order.
-            CHARGES THE ACCOUNT'S STRIPE CARD ON FILE.
+    @mcp.tool(annotations=PURCHASE)
+    def winnr_purchase_prewarmed_batch(items: list[dict]) -> str:
+        """Buy pre-warmed addresses on SEVERAL domains as one order and one charge.
+        CHARGES THE ACCOUNT'S CARD ON FILE.
 
-            Preferred over calling winnr_purchase_prewarmed repeatedly: the
-            whole order is a single charge instead of one charge per domain.
+        All-or-nothing: every domain is claimed up front; if any was already sold
+        or the charge fails, the whole order rolls back and nothing is billed.
+        Same terms as winnr_purchase_prewarmed. Confirm the full list and total
+        with the user first.
 
-            All-or-nothing. Every domain is claimed up front; if any domain has
-            already been bought by someone else, or the charge fails, the entire
-            order is rolled back and the account is not billed.
+        Args:
+            items: 1-25 order items, each:
+                - domain (str, required)
+                - address_count (int, required): 3-50
+                - custom_usernames (list[str], optional): 3-10 local-parts to
+                  provision as new mailboxes instead of the warmed ones
+                Duplicate domains in one order are rejected.
+        """
+        if not items:
+            return tool_error("items must contain at least one order item")
+        if len(items) > MAX_BATCH:
+            return tool_error(
+                f"A batch order takes at most {MAX_BATCH} domains, got {len(items)}. Split it up."
+            )
+        order = []
+        seen: set[str] = set()
+        for i, item in enumerate(items):
+            if not isinstance(item, dict) or not (item.get("domain") or "").strip():
+                return tool_error(f"items[{i}] must be an object with a 'domain'")
+            d = clean_domain(item["domain"])
+            if d in seen:
+                return tool_error(f"Duplicate domain in order: {d}")
+            seen.add(d)
+            entry = dict(item)
+            entry["domain"] = d
+            order.append(entry)
+        return client.post(
+            "/v1/prewarmed/purchase-batch",
+            json_body={"items": order},
+            timeout=PURCHASE_TIMEOUT_SECONDS,
+        ).render()
 
-            Same terms as winnr_purchase_prewarmed: $3 per address per month,
-            no minimum term, domain included, first month charged now.
+    @mcp.tool(annotations=DESTRUCTIVE)
+    def winnr_cancel_prewarmed(domain: str) -> str:
+        """Cancel a purchased pre-warmed domain and stop its billing. DESTRUCTIVE.
 
-            Args:
-                items: 1-25 order items, each a dict with:
-                    - domain (str, required): The pre-warmed domain
-                    - address_count (int, required): Warmed addresses to take
-                      (3-50)
-                    - custom_usernames (list[str], optional): 3-10 local-parts
-                      to provision as new mailboxes instead of the warmed ones
-                    Duplicate domains in one order are rejected.
-            """
-            if not items:
-                return "Error: items must contain at least one order item."
-            if len(items) > 25:
-                return (
-                    f"Error: a batch order takes at most 25 domains, got {len(items)}. "
-                    "Split it into multiple orders."
-                )
-            response = client.post("/v1/prewarmed/purchase-batch", json_body={"items": items})
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Deletes the domain and all of its mailboxes (and their mail) from the
+        account and returns the domain to the marketplace. Cannot be undone.
+        Allowed at any time — there is no minimum term. Confirm first.
 
-        @mcp.tool()
-        def winnr_cancel_prewarmed(domain: str) -> str:
-            """Cancel a purchased pre-warmed domain and stop its billing.
-
-            DESTRUCTIVE — this deletes the domain and all of its mailboxes from
-            the account, along with any mail stored in them, and returns the
-            domain to the marketplace. It cannot be undone.
-
-            Allowed at any time — there is no minimum term (the 90-day term
-            was removed in August 2026).
-
-            Args:
-                domain: The purchased pre-warmed domain to cancel
-            """
-            response = client.post("/v1/prewarmed/cancel", json_body={"domain": domain})
-            if not response.ok:
-                return response.error_message or "Unknown error"
-            return response.to_json()
+        Args:
+            domain: The purchased pre-warmed domain to cancel
+        """
+        d = clean_domain(domain)
+        if not d:
+            return tool_error("domain is required")
+        return client.post("/v1/prewarmed/cancel", json_body={"domain": d}).render()
