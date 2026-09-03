@@ -29,7 +29,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List warming mailboxes")
     def winnr_list_warming() -> str:
         """List every warming-enabled mailbox with its current stats.
 
@@ -38,7 +38,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.get("/v1/warming").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get warming overview")
     def winnr_get_warming_overview() -> str:
         """Aggregate warming stats for the account.
 
@@ -47,7 +47,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.get("/v1/warming/overview").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get warming metrics")
     def winnr_get_warming_metrics(user_id: str) -> str:
         """Daily warming time-series for one mailbox (sent, inbox rate, spam rate, health).
 
@@ -58,7 +58,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.PURCHASE, PURCHASE)
+    @winnr_tool(mcp, sc.PURCHASE, PURCHASE, title="Enable warming")
     def winnr_enable_warming(
         user_ids: list[str],
         emails_per_day: int = 20,
@@ -124,7 +124,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         body = {"user_ids": ids, "settings": {"emails_per_day": per_day, "rampup_speed": speed}}
         return client.post("/v1/warming/enable", json_body=body).render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Disable warming")
     def winnr_disable_warming(user_ids: list[str]) -> str:
         """Turn warming off for one or more mailboxes and stop their $0.60/month charge.
 
@@ -138,7 +138,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
             return tool_error("user_ids must contain at least one email user ID")
         return client.post("/v1/warming/disable", json_body={"user_ids": user_ids}).render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Pause warming")
     def winnr_pause_warming(user_id: str) -> str:
         """Pause warming on one mailbox without disabling it (billing continues).
 
@@ -147,7 +147,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.post(f"/v1/warming/{seg(user_id)}/pause").render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Resume warming")
     def winnr_resume_warming(user_id: str) -> str:
         """Resume warming on a paused mailbox.
 
@@ -156,7 +156,7 @@ def register_warming_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.post(f"/v1/warming/{seg(user_id)}/resume").render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Update warming settings")
     def winnr_update_warming_settings(
         user_id: str,
         emails_per_day: int | None = None,

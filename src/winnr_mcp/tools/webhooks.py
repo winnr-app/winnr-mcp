@@ -36,7 +36,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List webhooks")
     def winnr_list_webhooks() -> str:
         """List the account's outbound webhook endpoints.
 
@@ -45,7 +45,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.get("/v1/webhooks").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get webhook deliveries")
     def winnr_get_webhook_deliveries(webhook_id: str, limit: int = 25, cursor: str | None = None) -> str:
         """Recent delivery attempts for one webhook (event, HTTP status, retries, time).
 
@@ -63,7 +63,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Create webhook")
     def winnr_create_webhook(url: str, events: list[str], description: str | None = None) -> str:
         """Create a webhook endpoint that receives signed event notifications.
 
@@ -90,7 +90,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
             body["description"] = description
         return client.post("/v1/webhooks", json_body=body).render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Update webhook")
     def winnr_update_webhook(
         webhook_id: str,
         url: str | None = None,
@@ -131,7 +131,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
             return tool_error("At least one field must be provided.")
         return client.patch(f"/v1/webhooks/{seg(webhook_id)}", json_body=body).render()
 
-    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE, title="Delete webhook")
     def winnr_delete_webhook(webhook_id: str) -> str:
         """Delete a webhook endpoint and stop all deliveries to it. Cannot be undone.
 
@@ -140,7 +140,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.delete(f"/v1/webhooks/{seg(webhook_id)}").render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Test webhook")
     def winnr_test_webhook(webhook_id: str) -> str:
         """Send a signed test.ping event to a webhook so the customer can verify their receiver.
 
@@ -150,7 +150,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         return client.post(f"/v1/webhooks/{seg(webhook_id)}/test").render()
 
     # GET, but hands out a credential: hidden from read-only sessions on purpose.
-    @winnr_tool(mcp, sc.WRITE, READ)
+    @winnr_tool(mcp, sc.WRITE, READ, title="Get webhook secret")
     def winnr_get_webhook_secret(webhook_id: str) -> str:
         """Retrieve a webhook's signing secret. SENSITIVE — treat like a password.
 
@@ -162,7 +162,7 @@ def register_webhook_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.get(f"/v1/webhooks/{seg(webhook_id)}/secret").render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Rotate webhook secret")
     def winnr_rotate_webhook_secret(webhook_id: str) -> str:
         """Rotate a webhook's signing secret. The old one stays valid for 24 hours.
 

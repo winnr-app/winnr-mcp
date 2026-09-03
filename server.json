@@ -1,0 +1,49 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.winnr-app/winnr-mcp",
+  "description": "Manage cold email infrastructure from any AI assistant: buy and provision domains, create mailboxes, configure DNS, run email warming, read and reply to mail, and buy pre-warmed domains. Hosted with OAuth, or run locally.",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/winnr-app/winnr-mcp",
+    "source": "github"
+  },
+  "version": "0.6.1",
+  "websiteUrl": "https://winnr.app/mcp.html",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "winnr-mcp",
+      "version": "0.6.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "WINNR_API_TOKEN",
+          "description": "Winnr API token (starts with wnr_). Create one at https://app.winnr.app/mcp",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "WINNR_READ_ONLY",
+          "description": "Set to true to expose read-only tools even when the token can write",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "WINNR_NO_PURCHASES",
+          "description": "Set to true to keep write access but hide every tool that charges the card",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.winnr.app/mcp"
+    }
+  ]
+}

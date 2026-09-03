@@ -22,7 +22,7 @@ EXPORT_FORMATS = (
 def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register data export MCP tools."""
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List export formats")
     def winnr_list_export_formats() -> str:
         """List the CSV export formats the API supports (one per sequencer/outreach tool).
 
@@ -33,7 +33,7 @@ def register_export_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
 
     # Registered for read/write tokens only: the API requires write scope for
     # POST /v1/export because the CSV contains mailbox passwords.
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Export mailbox credentials")
     def winnr_export_email_users(
         format: str = "default",
         domains: list[str] | None = None,

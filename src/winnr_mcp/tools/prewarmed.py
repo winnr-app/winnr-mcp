@@ -47,7 +47,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Browse pre-warmed domains")
     def winnr_browse_prewarmed(
         search: str | None = None,
         sort_by: str = "health",
@@ -88,7 +88,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             params["include_all"] = "true"
         return client.get("/v1/prewarmed/browse", params=params).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get pre-warmed domain")
     def winnr_get_prewarmed_domain(domain: str) -> str:
         """Full detail for one available pre-warmed domain.
 
@@ -103,7 +103,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             return tool_error("domain is required")
         return client.get(f"/v1/prewarmed/{seg(d)}").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Check blocklists")
     def winnr_check_prewarmed_blocklist(domain: str, blocklist: str | None = None) -> str:
         """Live blocklist check on a pre-warmed domain (all nine lists by default).
 
@@ -128,7 +128,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             params = {"list": bl}
         return client.post(f"/v1/prewarmed/{seg(d)}/blocklist-check", params=params).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List my pre-warmed domains")
     def winnr_list_my_prewarmed() -> str:
         """List the pre-warmed domains this account has bought, with purchase dates.
 
@@ -139,7 +139,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.PURCHASE, PURCHASE)
+    @winnr_tool(mcp, sc.PURCHASE, PURCHASE, title="Buy pre-warmed domain")
     def winnr_purchase_prewarmed(
         domain: str,
         address_count: int = MIN_ADDRESSES,
@@ -207,7 +207,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             "/v1/prewarmed/purchase", json_body=body, timeout=PURCHASE_TIMEOUT_SECONDS
         ).render()
 
-    @winnr_tool(mcp, sc.PURCHASE, PURCHASE)
+    @winnr_tool(mcp, sc.PURCHASE, PURCHASE, title="Buy pre-warmed domains")
     def winnr_purchase_prewarmed_batch(items: list[dict], confirmation_token: str | None = None) -> str:
         """Buy pre-warmed addresses on SEVERAL domains as one order and one charge.
         CHARGES THE ACCOUNT'S CARD ON FILE.
@@ -273,7 +273,7 @@ def register_prewarmed_tools(mcp: FastMCP, client: WinnrClient, config: WinnrCon
             timeout=PURCHASE_TIMEOUT_SECONDS,
         ).render()
 
-    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE, title="Cancel pre-warmed domain")
     def winnr_cancel_prewarmed(domain: str) -> str:
         """Cancel a purchased pre-warmed domain and stop its billing. DESTRUCTIVE.
 

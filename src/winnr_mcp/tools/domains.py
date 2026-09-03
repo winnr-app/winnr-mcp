@@ -42,7 +42,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
 
     # ── Read tools (always registered) ──────────────────────────────────
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List domains")
     def winnr_list_domains(
         limit: int = 25,
         cursor: str | None = None,
@@ -70,7 +70,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             params["filter[status]"] = s
         return client.get("/v1/domains", params=params).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get domain")
     def winnr_get_domain(domain_id: str) -> str:
         """Get one domain by id, including DNS/provisioning status and health.
 
@@ -79,7 +79,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.get(f"/v1/domains/{seg(domain_id)}").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Check one domain")
     def winnr_search_domains(domain: str) -> str:
         """Check whether ONE domain is available to register, with Winnr's price in USD.
 
@@ -95,7 +95,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             return tool_error("domain must be a full domain name like example.com")
         return client.get("/v1/domains/search", params={"domain": d}).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Check domains in bulk")
     def winnr_search_domains_bulk(domains: list[str]) -> str:
         """Check availability and price for up to 100 domains in one call.
 
@@ -114,7 +114,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             return tool_error(f"Maximum {MAX_SEARCH_BULK} domains per call, got {len(cleaned)}")
         return client.post("/v1/domains/search-bulk", json_body={"domains": cleaned}).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get DNS status")
     def winnr_get_dns_status(domain_id: str) -> str:
         """Provisioning + propagation status of a domain's DNS (MX, SPF, DKIM, DMARC).
 
@@ -123,7 +123,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.get(f"/v1/domains/{seg(domain_id)}/dns-status").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get DNS records")
     def winnr_get_dns_records(domain_id: str) -> str:
         """The exact DNS records to add at the customer's own DNS host (manual-DNS domains).
 
@@ -135,7 +135,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.get(f"/v1/domains/{seg(domain_id)}/dns-records").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Check DNS provider")
     def winnr_check_dns_provider(domains: list[str]) -> str:
         """Detect where domains are currently hosted (registrar / nameserver provider).
 
@@ -155,7 +155,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
 
     # ── Write tools (only if token has write permission) ────────────────
 
-    @winnr_tool(mcp, sc.PURCHASE, PURCHASE)
+    @winnr_tool(mcp, sc.PURCHASE, PURCHASE, title="Buy domains")
     def winnr_purchase_domains(domains: list[dict], confirmation_token: str | None = None) -> str:
         """Buy and fully set up new domains. CHARGES THE ACCOUNT'S CARD ON FILE.
 
@@ -238,7 +238,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             timeout=PURCHASE_TIMEOUT_SECONDS,
         ).render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Set up domain")
     def winnr_setup_domain(
         domain: str,
         setup_dns: bool = True,
@@ -275,7 +275,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             body["tags"] = tags
         return client.post("/v1/domains/setup", json_body=body).render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Connect your own domains")
     def winnr_connect_domains(
         domains: list[str],
         manual_dns: bool = False,
@@ -312,7 +312,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             body["cloudflare_api_token"] = cloudflare_api_token.strip()
         return client.post("/v1/domains/connect", json_body=body).render()
 
-    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE, title="Delete domain")
     def winnr_delete_domain(domain_id: str) -> str:
         """Permanently delete a domain and every mailbox (and all mail) on it.
 
@@ -326,7 +326,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.delete(f"/v1/domains/{seg(domain_id)}").render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Tag domains")
     def winnr_tag_domains(domain_ids: list[str], tags: list[str], mode: str = "add") -> str:
         """Add, remove, or replace tags on up to 50 domains.
 
@@ -382,7 +382,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
             "failed": len(results) - updated, "results": results,
         })
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Verify DNS records")
     def winnr_verify_dns(domain_id: str) -> str:
         """Live-check a manual-DNS domain's records (MX, SPF, DKIM, DMARC) and record the result.
 
@@ -394,7 +394,7 @@ def register_domain_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig
         """
         return client.post(f"/v1/domains/{seg(domain_id)}/verify-dns").render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT)
+    @winnr_tool(mcp, sc.WRITE, WRITE_IDEMPOTENT, title="Check nameservers")
     def winnr_check_nameservers(domains: list[str]) -> str:
         """Check whether connected domains now point at Winnr's nameservers.
 
