@@ -299,3 +299,59 @@ def test_another_client_cannot_revoke_or_refresh_someone_elses_token(env):
     r = client.post("/token", data={"grant_type": "refresh_token", "refresh_token": tok["refresh_token"], "client_id": other["client_id"]})
     assert r.status_code == 400
     assert rpc(client, tok["access_token"], "tools/list").status_code in (200, 400)
+
+
+def test_lambda_handler_survives_repeated_invocations(monkeypatch):
+    """Regression: the session manager may only start once, but Mangum ran the
+    lifespan per invocation, so every request after the first 500'd."""
+    monkeypatch.setenv("WINNR_MCP_ISSUER", ISSUER)
+    monkeypatch.setenv("WINNR_DASHBOARD_URL", DASH)
+    monkeypatch.setenv("WINNR_API_URL", API)
+    monkeypatch.setenv("WINNR_CONFIRM_SECRET", "s")
+    monkeypatch.delenv("WINNR_MCP_TABLE", raising=False)
+    import importlib
+
+    module = importlib.import_module("winnr_mcp.remote.lambda_handler")
+    module = importlib.reload(module)
+
+    def event(path: str, method: str = "GET", body: str | None = None) -> dict:
+        return {
+            "version": "2.0",
+            "rawPath": path,
+            "rawQueryString": "",
+            "headers": {"host": "mcp.test", "content-type": "application/json"},
+            "requestContext": {"http": {"method": method, "path": path, "sourceIp": "1.2.3.4"}},
+            "body": body,
+            "isBase64Encoded": False,
+        }
+
+    for _ in range(3):
+        resp = module.handler(event("/healthz"), None)
+        assert resp["statusCode"] == 200, resp
+        resp = module.handler(event("/.well-known/oauth-authorization-server"), None)
+        assert resp["statusCode"] == 200, resp
+    # an unauthenticated MCP call still reaches the transport (401, not 500)
+    resp = module.handler(event("/mcp", "POST", json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"})), None)
+    assert resp["statusCode"] == 401, resp
+
+
+def test_dynamo_store_roundtrip_has_no_decimals():
+    """Regression: DynamoDB returns numbers as Decimal, which JSONResponse cannot serialise."""
+    import json as _json
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+
+    from winnr_mcp.remote.store import DynamoStore, _dynamo_safe
+
+    stored = _dynamo_safe({"created_at": 1_700_000_000, "price": 12.5, "nested": {"n": 3}, "list": [1, 2], "empty": ""})
+    assert isinstance(stored["price"], Decimal) and stored["empty"] is None
+
+    store = DynamoStore.__new__(DynamoStore)
+    store._table = MagicMock()
+    store._table.get_item.return_value = {"Item": {"pk": "k", "data": stored, "ttl": 9_999_999_999}}
+    item = store.get("k")
+    assert _json.dumps(item)  # would raise on a Decimal
+    assert item["created_at"] == 1_700_000_000 and item["price"] == 12.5 and item["nested"]["n"] == 3
+
+    store._table.get_item.return_value = {"Item": {"pk": "k", "data": stored, "ttl": 1}}
+    assert store.get("k") is None  # expired items are hidden even before the TTL sweeper runs

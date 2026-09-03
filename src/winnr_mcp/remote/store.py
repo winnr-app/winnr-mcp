@@ -58,7 +58,9 @@ class DynamoStore:
         if ttl is not None and int(ttl) < int(time.time()):
             return None
         data = item.get("data")
-        return dict(data) if isinstance(data, dict) else None
+        # DynamoDB hands numbers back as Decimal, which json.dumps refuses.
+        # The store's contract is plain JSON-able values, so convert here.
+        return _from_dynamo(data) if isinstance(data, dict) else None
 
     def put(self, key: str, item: dict[str, Any], ttl_seconds: int | None = None) -> None:
         record: dict[str, Any] = {"pk": key, "data": _dynamo_safe(item)}
@@ -68,6 +70,19 @@ class DynamoStore:
 
     def delete(self, key: str) -> None:
         self._table.delete_item(Key={"pk": key})
+
+
+def _from_dynamo(value: Any) -> Any:
+    """Decimal → int/float, recursively."""
+    from decimal import Decimal
+
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, dict):
+        return {k: _from_dynamo(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_from_dynamo(v) for v in value]
+    return value
 
 
 def _dynamo_safe(value: Any) -> Any:
