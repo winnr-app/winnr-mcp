@@ -2,25 +2,57 @@
 
 MCP server for the [Winnr](https://winnr.app) cold-email infrastructure API.
 
-Lets Claude Desktop, Claude Code, Cursor, Windsurf, VS Code (Copilot) and any other
-[MCP](https://modelcontextprotocol.io) client manage your domains, mailboxes, warming,
-inbox, pre-warmed marketplace and webhooks through natural language.
+Lets Claude (web, mobile and desktop), ChatGPT, Claude Code, Cursor, Windsurf, VS Code
+(Copilot) and any other [MCP](https://modelcontextprotocol.io) client manage your domains,
+mailboxes, warming, inbox, pre-warmed marketplace and webhooks through natural language.
 
-**Fastest setup:** log in and open **[app.winnr.app/mcp](https://app.winnr.app/mcp)** —
-it creates the token, writes the config for your client, and confirms the connection.
+**55 tools**, 26 of them read-only, plus 8 resources and 5 prompt playbooks.
 
-**54 tools**, 25 of them read-only. One Python package, no local state, nothing but HTTPS
-calls to `api.winnr.app`.
+Two ways to run it:
+
+| | Hosted (recommended) | Local |
+|---|---|---|
+| Endpoint | `https://mcp.winnr.app/mcp` | `uvx winnr-mcp` over stdio |
+| Auth | Sign in with Winnr (OAuth 2.1 + PKCE) | API token in the config file |
+| Install | none | `uv`, plus a config file per app |
+| Works with | claude.ai web/mobile, ChatGPT, and every desktop client | desktop clients only |
+
+**Setup either way:** [app.winnr.app/mcp](https://app.winnr.app/mcp).
 
 ---
 
-## Quick start
+## Hosted server
+
+Add `https://mcp.winnr.app/mcp` as a custom connector / remote MCP server. The client
+registers itself (RFC 7591), sends you to Winnr to sign in, and you choose what it may do:
+
+| Scope | Grants |
+|-------|--------|
+| `read` | List and inspect everything. Always granted. |
+| `write` | Create, change, send, delete. |
+| `purchase` | Spend money: buy domains, buy pre-warmed domains, enable warming. |
+
+Scopes imply each other (`purchase` ⊃ `write` ⊃ `read`), and a session only ever *sees*
+the tools its scopes allow. Each grant is backed by a normal API token named
+`MCP · <client>`, so it appears on the dashboard's API page and revoking it there cuts
+the assistant off.
+
+```bash
+# Claude Code, hosted
+claude mcp add --scope user --transport http winnr https://mcp.winnr.app/mcp
+```
+
+---
+
+## Quick start (local)
 
 ### 1. Get a token
 
 [app.winnr.app/mcp](https://app.winnr.app/mcp) (or API → Create Token). Tokens start with
 `wnr_`. Pick **read-only** if you only want reports and reply triage: every tool that
-creates, sends, buys or deletes is then hidden from the assistant.
+creates, sends, buys or deletes is then hidden from the assistant. Add
+`WINNR_NO_PURCHASES=true` (or `--no-purchases`) to keep full write access while hiding the
+four tools that charge the card.
 
 ### 2. Install `uv`
 
@@ -111,13 +143,25 @@ token has been used.
 | Env var | `WINNR_API_URL`     | API base URL (default `https://api.winnr.app`; resellers use their own host) |
 | Env var | `WINNR_TIMEOUT`     | HTTP timeout in seconds (default 30; purchases use 60)         |
 | Env var | `WINNR_READ_ONLY`   | `true` to register read tools only, even with a read/write token |
-| CLI     | `--token`, `--api-url`, `--timeout`, `--read-only`, `--version` | Override the env vars |
+| Env var | `WINNR_NO_PURCHASES`| `true` to keep write access but hide the four money tools |
+| Env var | `WINNR_CONFIRM_SECRET` | HMAC key for purchase confirmation tokens (set automatically on the hosted server) |
+| CLI     | `--token`, `--api-url`, `--timeout`, `--read-only`, `--no-purchases`, `--version` | Override the env vars |
 
 CLI args take precedence over environment variables.
 
 At startup the server calls `GET /v1/account`. An invalid token exits immediately with
 a clear message (a server that starts and then fails every call is worse). If the token
 is **read-only**, write tools are hidden automatically — no flag needed.
+
+## Spending money is always two steps
+
+The four tools that charge the card — `winnr_purchase_domains`,
+`winnr_purchase_prewarmed`, `winnr_purchase_prewarmed_batch`, `winnr_enable_warming` —
+never charge on the first call. They return a **live quote** (availability re-checked,
+exact prices, monthly total) plus a `confirmation_token` valid for 10 minutes. The
+assistant shows the quote, gets an explicit yes, and calls again with the token. The
+quote is recomputed at that moment and the token is an HMAC over it, so if a price moved
+or a domain sold, the purchase is refused with a fresh quote instead of a surprise charge.
 
 ## How the assistant is guided
 
@@ -135,6 +179,13 @@ instructions cover:
 - Domain-name hygiene (brand-like names; no outreach/blast/bulk words)
 - Cold-email ratios (2–5 mailboxes per domain, warm 2–3 weeks, modest daily sends)
 
+It also ships **resources** (read-only records the host can attach to a conversation:
+`winnr://account`, `winnr://usage`, `winnr://domains`, `winnr://domains/{id}`,
+`winnr://domains/{id}/dns-records`, `winnr://domains/{id}/dns-status`,
+`winnr://warming/overview`, `winnr://jobs/{id}`) and **prompts** — parameterised
+playbooks: `winnr_setup_infrastructure`, `winnr_health_check`, `winnr_reply_triage`,
+`winnr_connect_own_domain`, `winnr_scale_up`.
+
 ## Tools
 
 Permission is the token scope the tool needs. Read tools are visible to every token.
@@ -147,6 +198,7 @@ Permission is the token scope the tool needs. Read tools are visible to every to
 | `winnr_get_usage` | Domains / email users / pre-warmed addresses vs limits | read |
 | `winnr_list_jobs` | Recent async jobs (status / type filters) | read |
 | `winnr_get_job` | One job's status, progress, result, error | read |
+| `winnr_wait_for_job` | Block until a job finishes, streaming progress notifications | read |
 | `winnr_list_export_formats` | Supported CSV formats | read |
 | `winnr_export_email_users` | CSV of credentials (15-minute link), 22 sequencer formats | write |
 
@@ -161,7 +213,7 @@ Permission is the token scope the tool needs. Read tools are visible to every to
 | `winnr_get_dns_status` | Provisioning/propagation state (MX, SPF, DKIM, DMARC) | read |
 | `winnr_get_dns_records` | Records to add for manual-DNS domains | read |
 | `winnr_check_dns_provider` | Where a domain's DNS is hosted today (≤20 per call) | read |
-| `winnr_purchase_domains` | Buy + set up domains, async job; re-verifies quoted prices first (**charges card**) | write |
+| `winnr_purchase_domains` | Buy + set up domains (quote → confirm, **charges card**) | purchase |
 | `winnr_setup_domain` | Re-run DNS/mail provisioning, add mailboxes/redirect | write |
 | `winnr_connect_domains` | Bring your own domains (nameserver, manual DNS, or Cloudflare token) | write |
 | `winnr_check_nameservers` | Verify NS change; auto-queues provisioning | write |
@@ -197,7 +249,7 @@ Permission is the token scope the tool needs. Read tools are visible to every to
 | `winnr_list_warming` | Every warming mailbox with health/inbox rate | read |
 | `winnr_get_warming_overview` | Aggregate stats + estimated monthly cost | read |
 | `winnr_get_warming_metrics` | Daily series for one mailbox | read |
-| `winnr_enable_warming` | Enable, with `emails_per_day` (1–20) and `rampup_speed` (**$0.60/mailbox/mo**) | write |
+| `winnr_enable_warming` | Enable, `emails_per_day` 1–20, `rampup_speed` (quote → confirm, **$0.60/mailbox/mo**) | purchase |
 | `winnr_disable_warming` | Disable and stop billing | write |
 | `winnr_pause_warming` / `winnr_resume_warming` | Temporary stop / restart | write |
 | `winnr_update_warming_settings` | `emails_per_day`, `rampup_enabled`, `rampup_speed` | write |
@@ -210,8 +262,8 @@ Permission is the token scope the tool needs. Read tools are visible to every to
 | `winnr_get_prewarmed_domain` | Per-address health for one listing | read |
 | `winnr_check_prewarmed_blocklist` | Live blocklist check (9 lists) | read |
 | `winnr_list_my_prewarmed` | Purchased pre-warmed domains | read |
-| `winnr_purchase_prewarmed` | Buy one domain, $3/address/mo (**charges card**) | write |
-| `winnr_purchase_prewarmed_batch` | Buy up to 25 domains as one charge (**charges card**) | write |
+| `winnr_purchase_prewarmed` | Buy one domain, $3/address/mo (quote → confirm, **charges card**) | purchase |
+| `winnr_purchase_prewarmed_batch` | Buy up to 25 domains as one charge (quote → confirm, **charges card**) | purchase |
 | `winnr_cancel_prewarmed` | Cancel and return the domain (**destructive**) | write |
 
 ### Webhooks
@@ -256,10 +308,20 @@ git clone https://github.com/winnr-app/winnr-mcp.git
 cd winnr-mcp
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 102 tests, all HTTP mocked
+pytest          # 124 tests, all HTTP mocked (incl. the full OAuth flow)
 ruff check src tests
 WINNR_API_TOKEN=wnr_xxx python -m winnr_mcp   # run locally over stdio
+
+# the hosted server, locally
+pip install -e ".[remote]"
+uvicorn --factory winnr_mcp.remote.app:create_app --port 8000
 ```
+
+### Deploying the hosted server
+
+`python scripts/deploy_remote.py` provisions everything in AWS (DynamoDB table for OAuth
+state, SSM secret, arm64 Lambda + layer, HTTP API, ACM certificate, `mcp.winnr.app`
+domain and Route53 alias) and verifies the deployment.
 
 ## License
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "winnr-mcp"
-version = "0.5.1"
+version = "0.6.0"
 description = "MCP server for the Winnr email infrastructure API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,7 +28,15 @@ dependencies = [
 winnr-mcp = "winnr_mcp.__main__:main"
 
 [project.optional-dependencies]
+remote = [
+    "mangum>=0.17",
+    "firebase-admin>=6.0",
+    "boto3>=1.28",
+]
 dev = [
+    "mangum>=0.17",
+    "firebase-admin>=6.0",
+    "boto3>=1.28",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "respx>=0.20.0",
