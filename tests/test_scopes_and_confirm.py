@@ -342,3 +342,13 @@ def test_prompts_render(config, name):
     args = {"domain": "x.com"} if name == "winnr_connect_own_domain" else ({"mailboxes": "5"} if name == "winnr_scale_up" else {})
     prompt = asyncio.run(mcp.get_prompt(name, args))
     assert "winnr_" in prompt.messages[0].content.text
+
+
+def test_every_tool_has_a_display_title(config):
+    """Client directories (and Claude's connector UI) show titles, not snake_case names."""
+    mcp, _ = build(config)
+    missing = [t.name for t in mcp._tool_manager.list_tools() if not t.title]
+    assert not missing, missing
+    for t in mcp._tool_manager.list_tools():
+        assert t.title == t.title.strip() and len(t.title) <= 40, t.title
+        assert not t.title.startswith("winnr_"), t.title

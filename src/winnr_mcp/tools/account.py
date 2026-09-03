@@ -13,7 +13,7 @@ from winnr_mcp.tools._common import READ, winnr_tool
 def register_account_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register account-related MCP tools."""
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get account")
     def winnr_get_account() -> str:
         """Get the Winnr account this token belongs to: plan, limits and subscription status.
 
@@ -24,7 +24,7 @@ def register_account_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfi
         """
         return client.get("/v1/account").render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get usage and limits")
     def winnr_get_usage() -> str:
         """Get current usage vs. plan limits (domains, email users, pre-warmed addresses).
 

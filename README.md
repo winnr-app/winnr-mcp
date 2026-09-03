@@ -1,5 +1,7 @@
 # winnr-mcp
 
+<!-- mcp-name: io.github.winnr-app/winnr-mcp -->
+
 MCP server for the [Winnr](https://winnr.app) cold-email infrastructure API.
 
 Lets Claude (web, mobile and desktop), ChatGPT, Claude Code, Cursor, Windsurf, VS Code

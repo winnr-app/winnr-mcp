@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "winnr-mcp"
-version = "0.6.0"
+version = "0.6.1"
 description = "MCP server for the Winnr email infrastructure API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,13 @@ dependencies = [
     "mcp>=1.26.0,<2",  # 2.x renamed FastMCP → MCPServer; pin until migrated
     "httpx>=0.24.0",
 ]
+
+[project.urls]
+Homepage = "https://winnr.app/mcp.html"
+Documentation = "https://winnr.app/help/api-mcp/mcp-setup.html"
+Repository = "https://github.com/winnr-app/winnr-mcp"
+Issues = "https://github.com/winnr-app/winnr-mcp/issues"
+Changelog = "https://github.com/winnr-app/winnr-mcp/releases"
 
 [project.scripts]
 winnr-mcp = "winnr_mcp.__main__:main"

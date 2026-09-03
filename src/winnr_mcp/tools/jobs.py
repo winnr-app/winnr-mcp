@@ -19,7 +19,7 @@ POLL_SECONDS = 3.0
 def register_job_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -> None:
     """Register job tracking MCP tools."""
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List jobs")
     def winnr_list_jobs(limit: int = 25, status: str | None = None, job_type: str | None = None) -> str:
         """List recent async jobs (domain setup, purchases, mailbox creation/deletion), newest first.
 
@@ -40,7 +40,7 @@ def register_job_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig) -
             params["filter[type]"] = job_type.strip()
         return client.get("/v1/jobs", params=params).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Get job")
     def winnr_get_job(job_id: str) -> str:
         """Get the status and progress of one async job.
 
@@ -69,7 +69,7 @@ Args:
     timeout_seconds: How long to wait this call (1-{config.max_wait_seconds}, default 60)
 """
 
-    @winnr_tool(mcp, sc.READ, READ, description=wait_doc)
+    @winnr_tool(mcp, sc.READ, READ, title="Wait for job", description=wait_doc)
     async def winnr_wait_for_job(job_id: str, ctx: Context, timeout_seconds: int = 60) -> str:
         if not is_str(job_id):
             return tool_error("job_id is required")

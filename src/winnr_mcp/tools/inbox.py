@@ -17,7 +17,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
 
     # ── Read tools ──────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="List inbox messages")
     def winnr_list_inbox(
         limit: int = 50,
         cursor: str | None = None,
@@ -58,7 +58,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
             params["has_attachments"] = "true"
         return client.get("/v1/inbox", params=params).render()
 
-    @winnr_tool(mcp, sc.READ, READ)
+    @winnr_tool(mcp, sc.READ, READ, title="Read message")
     def winnr_get_message_body(uid: str, mailbox: str) -> str:
         """Get the full body of one message.
 
@@ -91,7 +91,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
 
     # ── Write tools ─────────────────────────────────────────────────────
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Send email")
     def winnr_send_email(
         user_id: str,
         to: str,
@@ -138,7 +138,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
             payload["references"] = references
         return client.post(f"/v1/email-users/{seg(user_id)}/inbox/send", json_body=payload).render()
 
-    @winnr_tool(mcp, sc.WRITE, WRITE)
+    @winnr_tool(mcp, sc.WRITE, WRITE, title="Refresh inbox")
     def winnr_refresh_inbox() -> str:
         """Trigger a sync of new mail into the inbox cache for every mailbox.
 
@@ -147,7 +147,7 @@ def register_inbox_tools(mcp: FastMCP, client: WinnrClient, config: WinnrConfig)
         """
         return client.post("/v1/inbox/refresh").render()
 
-    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE)
+    @winnr_tool(mcp, sc.WRITE, DESTRUCTIVE, title="Delete message")
     def winnr_delete_message(uid: str, mailbox: str) -> str:
         """Permanently delete one received message from a mailbox.
 
