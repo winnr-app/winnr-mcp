@@ -261,6 +261,51 @@ def test_registered_clients_are_public(env):
     assert reg.get("client_secret") in (None, "") and reg["token_endpoint_auth_method"] == "none"
 
 
+@pytest.mark.parametrize("uri", ["javascript:alert(document.domain)//", "JavaScript:alert(1)//", "data:text/html,hi",
+                                 "vbscript:msgbox(1)", "file:///etc/passwd", "blob:https://x.example/1"])
+def test_register_rejects_script_redirect_schemes(env, uri):
+    # The consent page navigates to the redirect URI from the dashboard origin:
+    # a javascript: URI there is XSS on app.winnr.app (on approve AND deny).
+    client, _ = env
+    r = client.post("/register", json={"client_name": "X", "redirect_uris": ["https://ok.example/cb", uri],
+                                       "token_endpoint_auth_method": "none"})
+    assert r.status_code == 400 and r.json()["error"] == "invalid_redirect_uri", r.text
+
+
+@pytest.mark.parametrize("uri", ["https://claude.ai/api/mcp/auth_callback", "http://localhost:33418/callback",
+                                 "http://desktop.example.ts.net:4789/api/oauth/callback",
+                                 "cursor://anysphere.cursor-mcp/oauth/callback", "claude://claude.ai/mcp-auth-callback/sdk"])
+def test_register_keeps_real_client_redirect_schemes(env, uri):
+    client, _ = env
+    r = client.post("/register", json={"client_name": "X", "redirect_uris": [uri], "token_endpoint_auth_method": "none"})
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.parametrize("uri", ["java\tscript:alert(1)", " javascript:alert(1)", "javascript:alert(1)", "data:,x"])
+def test_redirect_uri_is_safe_rejects_obfuscated_schemes(uri):
+    from winnr_mcp.remote.oauth import redirect_uri_is_safe
+
+    assert not redirect_uri_is_safe(uri)
+
+
+def test_client_stored_before_the_scheme_check_is_refused(env):
+    client, fb = env
+    provider = client.app.state.provider
+    provider.store.put("client#legacy", {"client": {
+        "client_id": "legacy", "redirect_uris": ["javascript:alert(1)//"], "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"]}})
+    _, challenge = pkce()
+    r = client.get("/authorize", params={"response_type": "code", "client_id": "legacy", "redirect_uri": "javascript:alert(1)//",
+                                         "code_challenge": challenge, "code_challenge_method": "S256", "state": "s"},
+                   follow_redirects=False)
+    assert r.status_code == 400 and "javascript" not in r.headers.get("location", "")
+    # And a pending request carrying one can never be turned into a redirect, approve or deny.
+    provider.store.put("req#bad", {"client_id": "legacy", "redirect_uri": "javascript:alert(1)//", "scopes": ["read"],
+                                   "code_challenge": challenge, "created_at": 0})
+    r = client.post("/oauth/approve", json={"request_id": "bad", "decision": "deny"})
+    assert r.status_code == 400 and "redirect_to" not in r.json()
+
+
 def test_cors_allows_dashboard_only(env):
     client, _ = env
     r = client.options("/oauth/approve", headers={"Origin": DASH, "Access-Control-Request-Method": "POST"})

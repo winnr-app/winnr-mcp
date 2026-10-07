@@ -14,6 +14,7 @@ are opaque handles onto that document.
 
 from __future__ import annotations
 
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from mcp.server.auth.provider import (
     AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -42,6 +44,21 @@ ACCESS_TTL = 60 * 60
 REFRESH_TTL = 30 * 24 * 60 * 60
 CLIENT_TTL = 180 * 24 * 60 * 60
 SESSION_CACHE_TTL = 60
+
+# The consent page navigates the browser to the redirect URI from the dashboard
+# origin, so a scheme the browser executes or renders inline would run the
+# registrant's content as app.winnr.app. Everything else stays allowed: real
+# hosts use https, loopback and LAN http, and app schemes (cursor://, claude://).
+UNSAFE_REDIRECT_SCHEMES = frozenset({"javascript", "data", "vbscript", "file", "blob", "about", "filesystem", "view-source"})
+_SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
+
+
+def redirect_uri_is_safe(uri: object) -> bool:
+    # Match the raw string, no stripping: browsers drop whitespace and control
+    # characters inside a scheme ("java\tscript:"), so anything that is not a
+    # clean RFC 3986 scheme is rejected outright rather than normalised.
+    match = _SCHEME.match(str(uri))
+    return bool(match) and match.group(1).lower() not in UNSAFE_REDIRECT_SCHEMES
 
 
 @dataclass
@@ -68,9 +85,16 @@ class WinnrOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Ref
         item = self.store.get(f"client#{client_id}")
         if not item:
             return None
-        return OAuthClientInformationFull.model_validate(item["client"])
+        client = OAuthClientInformationFull.model_validate(item["client"])
+        # Registrations from before the scheme check are refused, not trusted.
+        if not all(redirect_uri_is_safe(u) for u in client.redirect_uris or []):
+            return None
+        return client
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        for uri in client_info.redirect_uris or []:
+            if not redirect_uri_is_safe(uri):
+                raise RegistrationError("invalid_redirect_uri", f"redirect_uri scheme is not allowed: {str(uri)[:40]}")
         # Public clients only: every MCP host (claude.ai, Cursor, ...) is a
         # public client using PKCE. A client_secret would just be one more
         # thing to leak.
@@ -129,6 +153,8 @@ class WinnrOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Ref
         if not item:
             raise ValueError("This sign-in request has expired. Start again from your AI assistant.")
         self.store.delete(f"req#{request_id}")
+        if not redirect_uri_is_safe(item["redirect_uri"]):
+            raise ValueError("This sign-in request is not valid. Start again from your AI assistant.")
         if decision != "approve":
             return construct_redirect_uri(item["redirect_uri"], error="access_denied", state=item.get("state"))
 
